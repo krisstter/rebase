@@ -1,0 +1,45 @@
+# Define the list of hostnames
+$HostList = @(
+    "Host1",
+    "Host2",
+    "Host3"
+)
+
+# Specify the service name to check
+$ServiceName = "YourServiceName"
+
+# Output file path
+$OutputFile = "C:\Temp\ServiceCheckResults.csv"
+
+# Initialize results array
+$Results = @()
+
+# Loop through each host
+foreach ($Host in $HostList) {
+    try {
+        # Use Invoke-Command to run Get-Service on the remote host
+        $ServiceExists = Invoke-Command -ComputerName $Host -ScriptBlock {
+            param($ServiceName)
+            try {
+                Get-Service -Name $ServiceName -ErrorAction Stop | Out-Null
+                $true
+            } catch {
+                $false
+            }
+        } -ArgumentList $ServiceName -ErrorAction Stop
+    } catch {
+        # If the remote host is unreachable or an error occurs, set ServiceExists to $false
+        $ServiceExists = $false
+    }
+
+    # Add the result to the results array
+    $Results += New-Object PSObject -Property @{
+        Hostname      = $Host
+        ServiceExists = $ServiceExists
+    }
+}
+
+# Export results to a CSV file
+$Results | Export-Csv -Path $OutputFile -NoTypeInformation -Encoding UTF8
+
+Write-Host "Service check completed. Results saved to $OutputFile"
