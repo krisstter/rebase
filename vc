@@ -1,0 +1,21 @@
+# Get the list of DLLs in the folder
+$vc = Get-ChildItem -Path "Path\To\Folder" -Filter *.dll
+
+# Loop through each DLL in the list
+foreach ($file in $vc) {
+    # Construct the full path in System32
+    $system32Dll = "C:\Windows\System32\$($file.Name)"
+    
+    # Check if the file exists in System32
+    if (Test-Path $system32Dll) {
+        # Remove the file
+        try {
+            Remove-Item -Path $system32Dll -Force
+            Write-Host "Deleted: $system32Dll" -ForegroundColor Green
+        } catch {
+            Write-Host "Failed to delete: $system32Dll. Error: $_" -ForegroundColor Red
+        }
+    } else {
+        Write-Host "File not found in System32: $($file.Name)" -ForegroundColor Yellow
+    }
+}
