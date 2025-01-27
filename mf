@@ -1,0 +1,17 @@
+function CopyMultipleFiles($sourceDir, $installPath, $instance) {
+    # Get files matching the instance in the source directory
+    $filesToCopy = Get-ChildItem -Path $sourceDir -File | Where-Object { $_.Name -match "\.$instance$" }
+
+    if ($filesToCopy.Count -gt 0) {
+        foreach ($file in $filesToCopy) {
+            # Retain the original name without instance suffix
+            $newFileName = $file.Name -replace "\.$instance$", ""
+            $destinationFile = Join-Path -Path $installPath -ChildPath $newFileName
+            Write-Host "Copying $($file.FullName) to $destinationFile"
+            Copy-Item -Path $file.FullName -Destination $destinationFile -Force
+            Write-Host "SUCCESS: Copied $($file.Name) to $destinationFile"
+        }
+    } else {
+        throw "No files matching instance '$instance' found in $sourceDir"
+    }
+}
