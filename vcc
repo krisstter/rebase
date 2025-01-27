@@ -1,0 +1,28 @@
+# Define the list of DLL files
+$vc = "mfc100.dll","msvcp100.dll","msvcr100.dll","msvcr110.dll"
+
+# List of remote servers
+$servers = @("Server1", "Server2", "Server3") # Replace with actual server names
+
+# Loop through each server
+foreach ($server in $servers) {
+    Write-Host "Processing server: $server"
+
+    Invoke-Command -ComputerName $server -ScriptBlock {
+        param ($dllFiles)
+
+        # Path to System32
+        $system32Path = "C:\Windows\System32"
+
+        foreach ($file in $dllFiles) {
+            $filePath = Join-Path -Path $system32Path -ChildPath $file
+
+            if (Test-Path $filePath) {
+                Write-Host "Found: $filePath. Removing it."
+                Remove-Item -Path $filePath -Force -ErrorAction Stop
+            } else {
+                Write-Host "Not found: $filePath"
+            }
+        }
+    } -ArgumentList $vc
+}
