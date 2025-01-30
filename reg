@@ -1,0 +1,7 @@
+$updatedString1 = $string1 -creplace $pattern, {
+    if ($matches -and $matches.Count -gt 1) {
+        $_ -replace $matches[1], $newVersion
+    } else {
+        $_  # Return unchanged string if no match is found
+    }
+}
