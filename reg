@@ -1,7 +1,10 @@
-$updatedString1 = $string1 -creplace $pattern, {
-    if ($matches -and $matches.Count -gt 1) {
-        $_ -replace $matches[1], $newVersion
-    } else {
-        $_  # Return unchanged string if no match is found
-    }
-}
+
+# Use [regex]::Replace with a script block to dynamically replace Group 1 (the version)
+$updatedContent = [regex]::Replace($fileContent, $regexPattern, {
+    param($match)
+    # Replace only the captured version number (Group 1) with $newVersion
+    return $match.Value -replace $match.Groups[1].Value, $version
+})
+
+# Output the result
+$updatedContent
