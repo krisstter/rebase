@@ -1,0 +1,45 @@
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$SiteName,
+
+    [Parameter(Mandatory = $true)]
+    [string]$SitePhysicalPath,
+
+    [Parameter(Mandatory = $true)]
+    [string]$BindingInformation,
+
+    [Parameter(Mandatory = $false)]
+    [string]$User,  # Optional: Application pool user
+
+    [Parameter(Mandatory = $false)]
+    [string]$Password  # Optional: Application pool password
+)
+
+# Path to appcmd.exe
+$appcmd = "$env:SystemRoot\system32\inetsrv\appcmd.exe"
+
+# Create the IIS site
+Write-Host "Creating IIS site '$SiteName' with physical path '$SitePhysicalPath' and binding '$BindingInformation'"
+& $appcmd add site /name:"$SiteName" /physicalPath:"$SitePhysicalPath" /bindings:"$BindingInformation"
+
+# Define the app pool name (using site name)
+$appPoolName = "$SiteName"
+
+# Create or ensure the application pool exists
+Write-Host "Ensuring application pool '$appPoolName' exists..."
+& $appcmd add apppool /name:"$appPoolName" 2>$null  # Ignore errors if it already exists
+
+# Assign application pool to the site
+Write-Host "Assigning application pool '$appPoolName' to site '$SiteName'"
+& $appcmd set site /site.name:"$SiteName" /[path='/'].applicationPool:"$appPoolName"
+
+# Configure Application Pool Identity
+if ([string]::IsNullOrEmpty($User) -or [string]::IsNullOrEmpty($Password)) {
+    Write-Host "No user credentials provided. Setting '$appPoolName' to use ApplicationPoolIdentity."
+    & $appcmd set apppool /apppool.name:"$appPoolName" /processModel.identityType:"ApplicationPoolIdentity"
+} else {
+    Write-Host "User credentials provided. Configuring '$appPoolName' with specified user."
+    & $appcmd set apppool /apppool.name:"$appPoolName" /processModel.identityType:"SpecificUser" /processModel.userName:"$User" /processModel.password:"$Password"
+}
+
+Write-Host "IIS site and application pool configuration completed."
