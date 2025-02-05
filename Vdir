@@ -8,11 +8,16 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$BindingInformation,
 
+    # Optional Application Pool Credentials
     [Parameter(Mandatory = $false)]
-    [string]$User,  # Optional: Application pool user
+    [string]$User,  
 
     [Parameter(Mandatory = $false)]
-    [string]$Password  # Optional: Application pool password
+    [string]$Password,
+
+    # Optional Virtual Directory Name (Path will be the same as SitePhysicalPath)
+    [Parameter(Mandatory = $false)]
+    [string]$VirtualDirName  
 )
 
 # Path to appcmd.exe
@@ -22,7 +27,7 @@ $appcmd = "$env:SystemRoot\system32\inetsrv\appcmd.exe"
 Write-Host "Creating IIS site '$SiteName' with physical path '$SitePhysicalPath' and binding '$BindingInformation'"
 & $appcmd add site /name:"$SiteName" /physicalPath:"$SitePhysicalPath" /bindings:"$BindingInformation"
 
-# Define the app pool name (using site name)
+# Define the application pool name (using site name)
 $appPoolName = "$SiteName"
 
 # Create or ensure the application pool exists
@@ -42,4 +47,12 @@ if ([string]::IsNullOrEmpty($User) -or [string]::IsNullOrEmpty($Password)) {
     & $appcmd set apppool /apppool.name:"$appPoolName" /processModel.identityType:"SpecificUser" /processModel.userName:"$User" /processModel.password:"$Password"
 }
 
-Write-Host "IIS site and application pool configuration completed."
+# Add Virtual Directory (if VirtualDirName is provided)
+if (-not [string]::IsNullOrEmpty($VirtualDirName)) {
+    Write-Host "Adding virtual directory '$VirtualDirName' with physical path '$SitePhysicalPath' to site '$SiteName'"
+    & $appcmd add vdir /app.name:"$SiteName/" /path:"/$VirtualDirName" /physicalPath:"$SitePhysicalPath"
+} else {
+    Write-Host "No virtual directory name provided. Skipping virtual directory creation."
+}
+
+Write-Host "IIS site, application pool, and optional virtual directory configuration completed."
