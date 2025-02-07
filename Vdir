@@ -15,7 +15,11 @@ param(
     [string]$Password,
 
     [Parameter(Mandatory = $false)]
-    [string]$VirtualDirName
+    [string]$VirtualDirName,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateSet("Integrated", "Classic")]  # Ensures only valid values
+    [string]$PipelineMode = "Integrated"    # Default to Integrated
 )
 
 # Path to appcmd.exe
@@ -29,6 +33,7 @@ $iisconfig = @{
     User              = $User
     Password          = $Password
     VirtualDirName    = $VirtualDirName
+    PipelineMode      = $PipelineMode
 }
 
 # Create the IIS site
@@ -42,16 +47,20 @@ $appPoolName = "$($iisconfig.SiteName)"
 Write-Host "Ensuring application pool '$appPoolName' exists..."
 & $appcmd add apppool /name:"$appPoolName" 2>$null  # Ignore errors if it already exists
 
+# Set Managed Pipeline Mode (Integrated or Classic)
+Write-Host "Setting application pool '$appPoolName' to use '$($iisconfig.PipelineMode)' mode."
+& $appcmd set apppool /apppool.name:"$appPoolName" /managedPipelineMode:$($iisconfig.PipelineMode)
+
 # Assign application pool to the site
 Write-Host "Assigning application pool '$appPoolName' to site '$($iisconfig.SiteName)'"
 & $appcmd set site /site.name:"$($iisconfig.SiteName)" /[path='/'].applicationPool:"$appPoolName"
 
 # Configure Application Pool Identity
 if (-not [string]::IsNullOrEmpty($iisconfig.User) -and -not [string]::IsNullOrEmpty($iisconfig.Password)) {
-    Write-Host "User credentials provided. Configuring app pool '$appPoolName' with specific user."
+    Write-Host "Using specific user for app pool '$appPoolName'"
     & $appcmd set apppool /apppool.name:"$appPoolName" /processModel.identityType:"SpecificUser" /processModel.userName:"$($iisconfig.User)" /processModel.password:"$($iisconfig.Password)"
 } else {
-    Write-Host "No user credentials provided. Setting '$appPoolName' to use ApplicationPoolIdentity."
+    Write-Host "No user credentials provided. Using ApplicationPoolIdentity."
     & $appcmd set apppool /apppool.name:"$appPoolName" /processModel.identityType:"ApplicationPoolIdentity"
 }
 
@@ -71,4 +80,4 @@ if (-not [string]::IsNullOrEmpty($iisconfig.VirtualDirName)) {
 Write-Host "Restarting IIS..."
 iisreset
 
-Write-Host "IIS site, application pool, and optional virtual directory configuration completed."
+Write-Host "✅ IIS site, application pool, and optional virtual directory configuration completed."
