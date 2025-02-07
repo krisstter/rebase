@@ -15,7 +15,7 @@ param(
     [string]$Password,
 
     [Parameter(Mandatory = $false)]
-    [string]$VirtualDirName,
+    [string]$VirtualAppName,   # Virtual application inside the site
 
     [Parameter(Mandatory = $false)]
     [ValidateSet("Integrated", "Classic")]  # Ensures only valid values
@@ -25,59 +25,50 @@ param(
 # Path to appcmd.exe
 $appcmd = "$env:SystemRoot\system32\inetsrv\appcmd.exe"
 
-# Store all config settings in an object
-$iisconfig = @{
-    SiteName           = $SiteName
-    SitePhysicalPath   = $SitePhysicalPath
-    BindingInformation = $BindingInformation
-    User              = $User
-    Password          = $Password
-    VirtualDirName    = $VirtualDirName
-    PipelineMode      = $PipelineMode
-}
-
-# Create the IIS site
-Write-Host "Creating IIS site '$($iisconfig.SiteName)' with physical path '$($iisconfig.SitePhysicalPath)' and binding '$($iisconfig.BindingInformation)'"
-& $appcmd add site /name:"$($iisconfig.SiteName)" /physicalPath:"$($iisconfig.SitePhysicalPath)" /bindings:"$($iisconfig.BindingInformation)"
-
 # Define the application pool name
-$appPoolName = "$($iisconfig.SiteName)"
+$appPoolName = "$SiteName"
 
 # Ensure the application pool exists
 Write-Host "Ensuring application pool '$appPoolName' exists..."
-& $appcmd add apppool /name:"$appPoolName" 2>$null  # Ignore errors if it already exists
+& $appcmd add apppool /name:"$appPoolName" 2>$null  # Ignore errors if already exists
 
-# Set Managed Pipeline Mode (Integrated or Classic)
-Write-Host "Setting application pool '$appPoolName' to use '$($iisconfig.PipelineMode)' mode."
-& $appcmd set apppool /apppool.name:"$appPoolName" /managedPipelineMode:$($iisconfig.PipelineMode)
+# Set Managed Pipeline Mode
+Write-Host "Setting application pool '$appPoolName' to use '$PipelineMode' mode."
+& $appcmd set apppool /apppool.name:"$appPoolName" /managedPipelineMode:$PipelineMode
+
+# Create IIS site
+Write-Host "Creating IIS site '$SiteName' with physical path '$SitePhysicalPath' and binding '$BindingInformation'"
+& $appcmd add site /name:"$SiteName" /physicalPath:"$SitePhysicalPath" /bindings:"$BindingInformation"
 
 # Assign application pool to the site
-Write-Host "Assigning application pool '$appPoolName' to site '$($iisconfig.SiteName)'"
-& $appcmd set site /site.name:"$($iisconfig.SiteName)" /[path='/'].applicationPool:"$appPoolName"
+Write-Host "Assigning application pool '$appPoolName' to site '$SiteName'"
+& $appcmd set site /site.name:"$SiteName" /[path='/'].applicationPool:"$appPoolName"
 
 # Configure Application Pool Identity
-if (-not [string]::IsNullOrEmpty($iisconfig.User) -and -not [string]::IsNullOrEmpty($iisconfig.Password)) {
+if (-not [string]::IsNullOrEmpty($User) -and -not [string]::IsNullOrEmpty($Password)) {
     Write-Host "Using specific user for app pool '$appPoolName'"
-    & $appcmd set apppool /apppool.name:"$appPoolName" /processModel.identityType:"SpecificUser" /processModel.userName:"$($iisconfig.User)" /processModel.password:"$($iisconfig.Password)"
+    & $appcmd set apppool /apppool.name:"$appPoolName" /processModel.identityType:"SpecificUser" /processModel.userName:"$User" /processModel.password:"$Password"
 } else {
     Write-Host "No user credentials provided. Using ApplicationPoolIdentity."
     & $appcmd set apppool /apppool.name:"$appPoolName" /processModel.identityType:"ApplicationPoolIdentity"
 }
 
-# Add Virtual Directory (if VirtualDirName is provided)
-if (-not [string]::IsNullOrEmpty($iisconfig.VirtualDirName)) {
-    Write-Host "Adding virtual directory '$($iisconfig.VirtualDirName)' with physical path '$($iisconfig.SitePhysicalPath)'"
-    & $appcmd add vdir /app.name:"$($iisconfig.SiteName)/" /path:"/$($iisconfig.VirtualDirName)" /physicalPath:"$($iisconfig.SitePhysicalPath)"
+# Add Virtual Application (if VirtualAppName is provided)
+if (-not [string]::IsNullOrEmpty($VirtualAppName)) {
+    Write-Host "Creating virtual application '$VirtualAppName' inside site '$SiteName' with path '$SitePhysicalPath/$VirtualAppName'"
     
-    # Assign application pool to virtual directory
-    Write-Host "Assigning application pool '$appPoolName' to virtual directory '$($iisconfig.VirtualDirName)'"
-    & $appcmd set app /app.name:"$($iisconfig.SiteName)/$($iisconfig.VirtualDirName)" /applicationPool:"$appPoolName"
+    # Create virtual application under the site
+    & $appcmd add app /site.name:"$SiteName" /path:"/$VirtualAppName" /physicalPath:"$SitePhysicalPath/$VirtualAppName" /applicationPool:"$appPoolName"
+
+    # Assign application pool to the virtual application
+    Write-Host "Assigning application pool '$appPoolName' to virtual application '$VirtualAppName'"
+    & $appcmd set app /app.name:"$SiteName/$VirtualAppName" /applicationPool:"$appPoolName"
 } else {
-    Write-Host "No virtual directory name provided. Skipping virtual directory creation."
+    Write-Host "No virtual application specified. Skipping virtual application creation."
 }
 
 # Restart IIS
 Write-Host "Restarting IIS..."
 iisreset
 
-Write-Host "✅ IIS site, application pool, and optional virtual directory configuration completed."
+Write-Host "✅ IIS site, application pool, and optional virtual application configuration completed."
