@@ -1,0 +1,2 @@
+msdeploy.exe -verb:sync -source:metakey=lm -dest:package=C:\IISGlobalSettings.zip -disableLink:AppPool -disableLink:Site
+msdeploy.exe -verb:sync -source:package=C:\IISGlobalSettings.zip -dest:metakey=lm
