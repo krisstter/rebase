@@ -1,30 +1,38 @@
 @echo off
+setlocal enabledelayedexpansion
 echo Updating PATH for Web Deploy...
 
 :: Define Web Deploy paths
 set "WEBDEPLOY_PATH_64=C:\Program Files\IIS\Microsoft Web Deploy V3"
 set "WEBDEPLOY_PATH_32=C:\Program Files (x86)\IIS\Microsoft Web Deploy V3"
 
-:: Check which path exists and update accordingly
+:: Check if Web Deploy exists and update PATH accordingly
 if exist "%WEBDEPLOY_PATH_64%" (
     echo Found Web Deploy (64-bit), updating PATH...
     setx PATH "%PATH%;%WEBDEPLOY_PATH_64%" /M
-    set PATH=%PATH%;%WEBDEPLOY_PATH_64%
-) else if exist "%WEBDEPLOY_PATH_32%" (
+    set "PATH=%PATH%;%WEBDEPLOY_PATH_64%"
+    goto :VerifyMsDeploy
+) 
+
+if exist "%WEBDEPLOY_PATH_32%" (
     echo Found Web Deploy (32-bit), updating PATH...
     setx PATH "%PATH%;%WEBDEPLOY_PATH_32%" /M
-    set PATH=%PATH%;%WEBDEPLOY_PATH_32%
-) else (
-    echo Web Deploy not found. Please install it first.
-    exit /b
+    set "PATH=%PATH%;%WEBDEPLOY_PATH_32%"
+    goto :VerifyMsDeploy
 )
 
-:: Verify the change
+:: If Web Deploy is not found
+echo Web Deploy not found. Please install it first.
+exit /b
+
+:VerifyMsDeploy
+:: Verify if msdeploy.exe is available
 echo Verifying msdeploy availability...
 msdeploy -? >nul 2>&1
 if %errorlevel% neq 0 (
     echo msdeploy is still not recognized. Restarting Explorer to apply changes...
-    taskkill /F /IM explorer.exe & start explorer
+    taskkill /F /IM explorer.exe >nul 2>&1
+    start explorer
     echo Restarting command prompt...
     start cmd
 ) else (
