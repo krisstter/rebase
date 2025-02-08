@@ -1,0 +1,34 @@
+@echo off
+echo Updating PATH for Web Deploy...
+
+:: Define Web Deploy paths
+set "WEBDEPLOY_PATH_64=C:\Program Files\IIS\Microsoft Web Deploy V3"
+set "WEBDEPLOY_PATH_32=C:\Program Files (x86)\IIS\Microsoft Web Deploy V3"
+
+:: Check which path exists and update accordingly
+if exist "%WEBDEPLOY_PATH_64%" (
+    echo Found Web Deploy (64-bit), updating PATH...
+    setx PATH "%PATH%;%WEBDEPLOY_PATH_64%" /M
+    set PATH=%PATH%;%WEBDEPLOY_PATH_64%
+) else if exist "%WEBDEPLOY_PATH_32%" (
+    echo Found Web Deploy (32-bit), updating PATH...
+    setx PATH "%PATH%;%WEBDEPLOY_PATH_32%" /M
+    set PATH=%PATH%;%WEBDEPLOY_PATH_32%
+) else (
+    echo Web Deploy not found. Please install it first.
+    exit /b
+)
+
+:: Verify the change
+echo Verifying msdeploy availability...
+msdeploy -? >nul 2>&1
+if %errorlevel% neq 0 (
+    echo msdeploy is still not recognized. Restarting Explorer to apply changes...
+    taskkill /F /IM explorer.exe & start explorer
+    echo Restarting command prompt...
+    start cmd
+) else (
+    echo msdeploy is now available!
+)
+
+pause
