@@ -1,0 +1,18 @@
+$varName = "MyVariable"
+$varValue = "MyValue"
+
+# Get the current value of the system-wide variable
+$currentValue = [System.Environment]::GetEnvironmentVariable($varName, "Machine")
+
+if ($currentValue -eq $null -or $currentValue -eq "") {
+    # Variable is not present, so add it
+    [System.Environment]::SetEnvironmentVariable($varName, $varValue, "Machine")
+    $env:$varName = $varValue  # Apply it to the current session
+
+    Write-Host "Added system-wide environment variable: $varName with value: $varValue"
+} else {
+    Write-Host "System-wide environment variable '$varName' already exists with value: $currentValue"
+}
+
+
+  $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
