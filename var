@@ -14,5 +14,5 @@ if ($currentValue -eq $null -or $currentValue -eq "") {
     Write-Host "System-wide environment variable '$varName' already exists with value: $currentValue"
 }
 
-
+[System.Environment]::GetEnvironmentVariables("Machine")
   $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
