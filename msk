@@ -1,0 +1,19 @@
+function Run-Command([string]$command, [string]$maskedCommand = $null) {
+    if ($null -eq $maskedCommand) {
+        $maskedCommand = $command  # If no masked version is provided, use the full command
+    }
+    Write-Host "Running command: $maskedCommand"
+    
+    cmd /c $command
+    
+    if ($LASTEXITCODE -ne 0) {
+        throw "Command failed: $maskedCommand, exit code: $LASTEXITCODE"
+    }
+}
+
+function Run-Appcmd([string]$command) {
+    # Mask passwords in appcmd commands
+    $maskedCommand = $command -replace '(/processModel\.password:)[^ ]+', '$1******'
+
+    Run-Command -command "%windir%\system32\inetsrv\appcmd $command" -maskedCommand "appcmd $maskedCommand"
+}
