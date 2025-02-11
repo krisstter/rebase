@@ -1,0 +1,13 @@
+Get-ChildItem "C:\path\to\your\directory" | ForEach-Object {
+    $acl = Get-Acl $_.FullName
+    foreach ($access in $acl.Access) {
+        [PSCustomObject]@{
+            File              = $_.Name
+            User              = $access.IdentityReference.Translate([System.Security.Principal.NTAccount]).Value
+            Rights            = $access.FileSystemRights
+            AccessType        = $access.AccessControlType
+            InheritanceFlags  = $access.InheritanceFlags
+            PropagationFlags  = $access.PropagationFlags
+        }
+    }
+} | Format-Table -AutoSize
