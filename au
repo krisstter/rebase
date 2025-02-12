@@ -27,3 +27,44 @@ Write-Host "Disabling IIS Client Certificate Mapping Authentication..."
 # Enable ASP.NET Impersonation
 Write-Host "Enabling ASP.NET Impersonation..."
 & $appcmd set config "$SiteName" /section:aspnetImpersonation /enabled:true
+
+
+# Unlock authentication settings at the server level (Required for virtual applications)
+Write-Host "Unlocking authentication settings at the server level..."
+& $appcmd set config /section:windowsAuthentication /overrideMode:Allow
+& $appcmd set config /section:anonymousAuthentication /overrideMode:Allow
+& $appcmd set config /section:basicAuthentication /overrideMode:Allow
+& $appcmd set config /section:digestAuthentication /overrideMode:Allow
+& $appcmd set config /section:formsAuthentication /overrideMode:Allow
+& $appcmd set config /section:clientCertificateMappingAuthentication /overrideMode:Allow
+& $appcmd set config /section:iisClientCertificateMappingAuthentication /overrideMode:Allow
+& $appcmd set config /section:aspnetImpersonation /overrideMode:Allow
+
+# Apply authentication settings ONLY to the virtual application
+Write-Host "Configuring authentication settings for virtual application '$VirtualAppName' under site '$SiteName'"
+
+# Enable Windows Authentication
+Write-Host "Enabling Windows Authentication for '$VirtualAppName'..."
+& $appcmd set config "$SiteName/$VirtualAppName" /section:windowsAuthentication /enabled:true
+
+# Disable all other authentication methods
+Write-Host "Disabling Anonymous Authentication for '$VirtualAppName'..."
+& $appcmd set config "$SiteName/$VirtualAppName" /section:anonymousAuthentication /enabled:false
+
+Write-Host "Disabling Basic Authentication for '$VirtualAppName'..."
+& $appcmd set config "$SiteName/$VirtualAppName" /section:basicAuthentication /enabled:false
+
+Write-Host "Disabling Digest Authentication for '$VirtualAppName'..."
+& $appcmd set config "$SiteName/$VirtualAppName" /section:digestAuthentication /enabled:false
+
+Write-Host "Disabling Forms Authentication for '$VirtualAppName'..."
+& $appcmd set config "$SiteName/$VirtualAppName" /section:formsAuthentication /enabled:false
+
+Write-Host "Disabling Client Certificate Authentication for '$VirtualAppName'..."
+& $appcmd set config "$SiteName/$VirtualAppName" /section:clientCertificateMappingAuthentication /enabled:false
+
+Write-Host "Disabling IIS Client Certificate Mapping Authentication for '$VirtualAppName'..."
+& $appcmd set config "$SiteName/$VirtualAppName" /section:iisClientCertificateMappingAuthentication /enabled:false
+
+# E
+
