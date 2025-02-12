@@ -4,3 +4,9 @@ msdeploy.exe -verb:sync -source:package=C:\IISGlobalSettings.zip -dest:metakey=l
 
 msdeploy.exe -verb:sync -source:metakey=lm/w3svc/1 -dest:package=C:\MySiteBackup.zip -disableLink:ContentPath
 msdeploy.exe -verb:sync -source:package=C:\MySiteBackup.zip -dest:metakey=lm/w3svc/1
+
+
+Component	Export Command	Import Command
+Specific IIS Site	msdeploy.exe -verb:sync -source:metakey=lm/w3svc/1 -dest:package=C:\MySiteBackup.zip	msdeploy.exe -verb:sync -source:package=C:\MySiteBackup.zip -dest:metakey=lm/w3svc/1
+Application Pool	msdeploy.exe -verb:sync -source:metakey=lm/applicationPools/MyAppPool -dest:package=C:\MyAppPoolBackup.zip	msdeploy.exe -verb:sync -source:package=C:\MyAppPoolBackup.zip -dest:metakey=lm/applicationPools/MyAppPool
+Physical Content	msdeploy.exe -verb:sync -source:iisSite=MyWebsite -dest:package=C:\MySiteContent.zip	msdeploy.exe -verb:sync -source:package=C:\MySiteContent.zip -dest:iisSite=MyWebsite
