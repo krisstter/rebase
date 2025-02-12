@@ -17,3 +17,5 @@ Physical Content	msdeploy.exe -verb:sync -source:iisSite=MyWebsite -dest:package
 -source:appPoolConfig=MyAppPool -source:iisSite=MyWebsite	App pool + site settings
 -source:metakey=lm -source:appPoolConfig=MyAppPool	App pool + global IIS settings
 -source:appPoolConfig=MyAppPool -source:contentPath=C:\inetpub\wwwroot\MyWebsite	App pool + site files
+
+msdeploy.exe -verb:sync -source:metakey=lm/applicationPools -dest:package=C:\AllAppPoolsBackup.zip
