@@ -66,5 +66,8 @@ Write-Host "Disabling Client Certificate Authentication for '$VirtualAppName'...
 Write-Host "Disabling IIS Client Certificate Mapping Authentication for '$VirtualAppName'..."
 & $appcmd set config "$SiteName/$VirtualAppName" /section:iisClientCertificateMappingAuthentication /enabled:false
 
-# E
+# Enable ASP.NET Impersonation
+Write-Host "Enabling ASP.NET Impersonation for '$VirtualAppName'..."
+& $appcmd set config "$SiteName/$VirtualAppName" /section:aspnetImpersonation /enabled:true
+
 
