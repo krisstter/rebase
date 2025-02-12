@@ -24,3 +24,4 @@ msdeploy.exe -verb:sync -source:metakey=lm/applicationPools -dest:package=C:\All
 msdeploy.exe -verb:sync -source:metakey=lm -dest:package=C:\IIS_GlobalSettings.zip -disableLink:AppPool -disableLink:ContentPath -disableLink:Site
 
 msdeploy.exe -verb:sync -source:appHostConfig=system.webServer/handlers -dest:package=C:\IIS_HandlerMappings.zip
+%windir%\system32\inetsrv\appcmd list config /section:system.webServer/handlers /xml > C:\HandlerMappings.xml
