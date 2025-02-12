@@ -1,0 +1,29 @@
+$appcmd = "$env:SystemRoot\system32\inetsrv\appcmd.exe"
+& $appcmd set config "$SiteName/$VirtualAppName" /section:anonymousAuthentication /enabled:false
+
+# Enable Windows Authentication
+Write-Host "Enabling Windows Authentication..."
+& $appcmd set config "$SiteName" /section:windowsAuthentication /enabled:true
+
+# Disable all other authentication methods
+Write-Host "Disabling Anonymous Authentication..."
+& $appcmd set config "$SiteName" /section:anonymousAuthentication /enabled:false
+
+Write-Host "Disabling Basic Authentication..."
+& $appcmd set config "$SiteName" /section:basicAuthentication /enabled:false
+
+Write-Host "Disabling Digest Authentication..."
+& $appcmd set config "$SiteName" /section:digestAuthentication /enabled:false
+
+Write-Host "Disabling Forms Authentication..."
+& $appcmd set config "$SiteName" /section:formsAuthentication /enabled:false
+
+Write-Host "Disabling Client Certificate Authentication..."
+& $appcmd set config "$SiteName" /section:clientCertificateMappingAuthentication /enabled:false
+
+Write-Host "Disabling IIS Client Certificate Mapping Authentication..."
+& $appcmd set config "$SiteName" /section:iisClientCertificateMappingAuthentication /enabled:false
+
+# Enable ASP.NET Impersonation
+Write-Host "Enabling ASP.NET Impersonation..."
+& $appcmd set config "$SiteName" /section:aspnetImpersonation /enabled:true
