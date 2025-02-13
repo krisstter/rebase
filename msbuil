@@ -1,0 +1,22 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <BinariesPath>$(ProjectDir)Output</BinariesPath>
+    </PropertyGroup>
+
+    <Target Name="ClearBinariesProd">
+        <!-- Ensure folder exists before attempting deletion -->
+        <MakeDir Directories="$(BinariesPath)\Binaries_Prod" Condition="!Exists('$(BinariesPath)\Binaries_Prod')" />
+
+        <!-- Delete all files inside the folder -->
+        <ItemGroup>
+            <FilesToDelete Include="$(BinariesPath)\Binaries_Prod\**\*.*" />
+        </ItemGroup>
+
+        <Delete Files="@(FilesToDelete)" Condition="@(FilesToDelete) != ''" />
+
+        <!-- Delete empty subdirectories -->
+        <RemoveDir Directories="$(BinariesPath)\Binaries_Prod\*" Condition="Exists('$(BinariesPath)\Binaries_Prod')" />
+
+        <Message Text="Cleared folder: $(BinariesPath)\Binaries_Prod" Importance="high"/>
+    </Target>
+</Project>
