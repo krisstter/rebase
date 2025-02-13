@@ -1,0 +1,14 @@
+param(
+    [string]$ExePath,     # Path to the executable
+    [string]$Params       # Parameters for the executable
+)
+
+# Check if the executable path is provided
+if (-not $ExePath) {
+    Write-Host "Executable path is required."
+    exit
+}
+
+# Start the process with the executable path and parameters, wait for it to finish, and don't open a new window
+Start-Process -FilePath $ExePath -ArgumentList $Params -NoNewWindow -Wait
+Write-Host "Process has completed."
