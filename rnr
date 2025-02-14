@@ -4,10 +4,18 @@ $process = Start-Process -FilePath $ExePath -ArgumentList $arguments -NoNewWindo
 
 # Wait for the process to exit
 $process.WaitForExit()
+Write-Host "Exit Code: $($process.ExitCode)"
 
 # Check if the ExitCode is 0 (successful)
 if ($process.ExitCode -eq 0) {
     Write-Host "Process completed successfully."
 } else {
     Write-Host "Process failed with exit code $($process.ExitCode)."
+}
+
+# Check if the PowerShell automatic $? variable is indicating success
+if ($?) {
+    Write-Host "PowerShell considers this script successful."
+} else {
+    Write-Host "PowerShell considers this script a failure."
 }
