@@ -1,0 +1,19 @@
+# Use cmd.exe to run the executable with arguments
+$cmdArgs = "/c `"$ExePath`" $arguments"
+
+# Start cmd.exe and pass the arguments
+$process = Start-Process -FilePath "cmd.exe" -ArgumentList $cmdArgs -PassThru -Wait
+
+# Capture the exit code of the cmd.exe process
+$exitCode = $process.ExitCode
+Write-Host "Exit Code: $exitCode"
+
+# Check the ExitCode to determine if the process was successful
+if ($exitCode -eq 0) {
+    Write-Host "Process completed successfully."
+} else {
+    Write-Host "Process failed with exit code $exitCode."
+}
+
+# Exit with the same code as the executable's process
+exit $exitCode
