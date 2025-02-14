@@ -21,14 +21,6 @@ if ($?) {
 }
 
 
-param(
-    [string]$ExePath,             # Path to the executable
-    [string]$CUrveReportBatch,    # CUrveReportBatch parameter
-    [string]$ReportDate,          # ReportDate parameter
-    [string]$CMDSRegion,          # CMDSRegion parameter
-    [string]$Analytics            # Analytics parameter
-)
-
 # Check if the executable path is provided
 if (-not $ExePath) {
     Write-Host "Executable path is required."
