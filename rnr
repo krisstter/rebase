@@ -31,6 +31,7 @@ if (-not $ExePath) {
 
 
 
+
 # Create a new Process object from .NET's System.Diagnostics.Process
 $process = New-Object System.Diagnostics.Process
 $process.StartInfo.FileName = $ExePath
@@ -41,8 +42,13 @@ $process.StartInfo.UseShellExecute = $false  # Required to redirect output
 $process.StartInfo.CreateNoWindow = $true    # Do not create a new window
 
 # Set up event handlers to capture output asynchronously
-$process.OutputDataReceived += { Write-Host $_.Data }
-$process.ErrorDataReceived += { Write-Host "ERROR: $($_.Data)" }
+$process.OutputDataReceived += {
+    Write-Host "Output: $($_.Data)"
+}
+
+$process.ErrorDataReceived += {
+    Write-Host "ERROR: $($_.Data)"
+}
 
 try {
     # Start the process
