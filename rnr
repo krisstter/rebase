@@ -28,6 +28,20 @@ if (-not $ExePath) {
 }
 
 
+param(
+    [string]$ExePath,             # Path to the executable
+    [string]$CUrveReportBatch,    # CUrveReportBatch parameter
+    [string]$ReportDate,          # ReportDate parameter
+    [string]$CMDSRegion,          # CMDSRegion parameter
+    [string]$Analytics            # Analytics parameter
+)
+
+# Check if the executable path is provided
+if (-not $ExePath) {
+    Write-Host "Executable path is required."
+    exit 1  # Exit with failure code if the executable path is not provided
+}
+
 # Create a new Process object from .NET's System.Diagnostics.Process
 $process = New-Object System.Diagnostics.Process
 $process.StartInfo.FileName = $ExePath
@@ -39,23 +53,31 @@ $process.StartInfo.CreateNoWindow = $true    # Do not create a new window
 
 try {
     # Start the process
-    $process.Start() | Out-Null
+    $process.Start()
+
+    # Capture the output
+    $output = $process.StandardOutput.ReadToEnd()
+    $errorOutput = $process.StandardError.ReadToEnd()
 
     # Wait for the process to exit
     $process.WaitForExit()
 
-    # Capture and output the exit code
+    # Output the standard output and error
+    Write-Host "Standard Output:"
+    Write-Host $output
+
+    Write-Host "Standard Error (if any):"
+    Write-Host $errorOutput
+
+    # Check the exit code
     $exitCode = $process.ExitCode
     Write-Host "Exit Code: $exitCode"
 
-    # Handle the exit code
-    if ($exitCode -eq 0) {
-        Write-Host "Process completed successfully."
-    } else {
-        Write-Host "Process failed with exit code $exitCode."
-    }
+    # Return the Process object for further inspection, equivalent to PowerShell's -PassThru
+    return $process
 
-} catch {
+}
+catch {
     Write-Host "An error occurred: $_"
     exit 1  # Exit with failure code if an error occurs
 }
