@@ -30,7 +30,8 @@ if (-not $ExePath) {
 
 
 
-ate a new Process object from .NET's System.Diagnostics.Process
+
+# Create a new Process object from .NET's System.Diagnostics.Process
 $process = New-Object System.Diagnostics.Process
 $process.StartInfo.FileName = $ExePath
 $process.StartInfo.Arguments = $arguments
@@ -39,7 +40,7 @@ $process.StartInfo.RedirectStandardError = $true
 $process.StartInfo.UseShellExecute = $false  # Required to redirect output
 $process.StartInfo.CreateNoWindow = $true    # Do not create a new window
 
-# Set up asynchronous output reading
+# Set up event handlers to capture output asynchronously
 $process.OutputDataReceived += { Write-Host $_.Data }
 $process.ErrorDataReceived += { Write-Host "ERROR: $($_.Data)" }
 
@@ -47,7 +48,7 @@ try {
     # Start the process
     $process.Start()
 
-    # Begin reading the output asynchronously
+    # Begin reading output asynchronously
     $process.BeginOutputReadLine()
     $process.BeginErrorReadLine()
 
@@ -72,4 +73,3 @@ catch {
     Write-Host "An error occurred: $_"
     exit 1  # Exit with failure code if an error occurs
 }
-
