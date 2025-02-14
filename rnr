@@ -28,21 +28,9 @@ if (-not $ExePath) {
 }
 
 
-param(
-    [string]$ExePath,             # Path to the executable
-    [string]$CUrveReportBatch,    # CUrveReportBatch parameter
-    [string]$ReportDate,          # ReportDate parameter
-    [string]$CMDSRegion,          # CMDSRegion parameter
-    [string]$Analytics            # Analytics parameter
-)
 
-# Check if the executable path is provided
-if (-not $ExePath) {
-    Write-Host "Executable path is required."
-    exit 1  # Exit with failure code if the executable path is not provided
-}
 
-# Create a new Process object from .NET's System.Diagnostics.Process
+ate a new Process object from .NET's System.Diagnostics.Process
 $process = New-Object System.Diagnostics.Process
 $process.StartInfo.FileName = $ExePath
 $process.StartInfo.Arguments = $arguments
@@ -51,33 +39,37 @@ $process.StartInfo.RedirectStandardError = $true
 $process.StartInfo.UseShellExecute = $false  # Required to redirect output
 $process.StartInfo.CreateNoWindow = $true    # Do not create a new window
 
+# Set up asynchronous output reading
+$process.OutputDataReceived += { Write-Host $_.Data }
+$process.ErrorDataReceived += { Write-Host "ERROR: $($_.Data)" }
+
 try {
     # Start the process
     $process.Start()
 
-    # Capture the output
-    $output = $process.StandardOutput.ReadToEnd()
-    $errorOutput = $process.StandardError.ReadToEnd()
+    # Begin reading the output asynchronously
+    $process.BeginOutputReadLine()
+    $process.BeginErrorReadLine()
 
     # Wait for the process to exit
     $process.WaitForExit()
 
-    # Output the standard output and error
-    Write-Host "Standard Output:"
-    Write-Host $output
-
-    Write-Host "Standard Error (if any):"
-    Write-Host $errorOutput
-
-    # Check the exit code
+    # Capture the exit code after the process finishes
     $exitCode = $process.ExitCode
     Write-Host "Exit Code: $exitCode"
 
+    # Check if the exit code indicates success or failure
+    if ($exitCode -eq 0) {
+        Write-Host "Process completed successfully."
+    } else {
+        Write-Host "Process failed with exit code $exitCode."
+    }
+
     # Return the Process object for further inspection, equivalent to PowerShell's -PassThru
     return $process
-
 }
 catch {
     Write-Host "An error occurred: $_"
     exit 1  # Exit with failure code if an error occurs
 }
+
