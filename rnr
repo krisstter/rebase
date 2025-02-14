@@ -28,10 +28,6 @@ if (-not $ExePath) {
 }
 
 
-
-
-
-
 # Create a new Process object from .NET's System.Diagnostics.Process
 $process = New-Object System.Diagnostics.Process
 $process.StartInfo.FileName = $ExePath
@@ -42,11 +38,10 @@ $process.StartInfo.UseShellExecute = $false  # Required to redirect output
 $process.StartInfo.CreateNoWindow = $true    # Do not create a new window
 
 # Set up event handlers to capture output asynchronously
-$process.OutputDataReceived += {
+$process.StartInfo | Add-Member -MemberType NoteProperty -Name 'OutputDataReceived' -Value {
     Write-Host "Output: $($_.Data)"
 }
-
-$process.ErrorDataReceived += {
+$process.StartInfo | Add-Member -MemberType NoteProperty -Name 'ErrorDataReceived' -Value {
     Write-Host "ERROR: $($_.Data)"
 }
 
