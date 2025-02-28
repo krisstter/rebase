@@ -1,0 +1,10 @@
+switch -Wildcard ($component) {
+    { $component -in @("svc1", "svc2") } {
+        # Shared commands for Portfolio and Crservice
+        run-some-commands
+    }
+    default {
+        # Default commands
+        run-default-commands
+    }
+}
