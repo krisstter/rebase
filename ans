@@ -1,0 +1,35 @@
+---
+- name: Install IIS and IIS Rewrite Module on Windows
+  hosts: windows
+  tasks:
+
+    - block:
+        - name: Install IIS Web-Server feature
+          ansible.windows.win_feature:
+            name: Web-Server
+            state: present
+            include_management_tools: yes
+          register: iis_install
+
+        - name: Ensure IIS service is running
+          ansible.windows.win_service:
+            name: W3SVC
+            state: started
+          when: iis_install.changed  # Only if IIS was just installed
+
+        - name: Download IIS Rewrite Module from Nexus
+          ansible.windows.win_get_url:
+            url: "http://"
+            dest: "C:\\temp\\IIS_Rewrite.msi"
+          register: rewrite_download
+          when: iis_install.changed  # Only if IIS was installed
+
+        - name: Install IIS Rewrite Module
+          ansible.windows.win_package:
+            path: "C:\\temp\\IIS_Rewrite.msi"
+            state: present
+            arguments: "/quiet /norestart"
+          when: rewrite_download.changed  # Only if the file was just downloaded
+
+      name: IIS Installation and Module Setup
+      when: ansible_os_family == "Windows"
