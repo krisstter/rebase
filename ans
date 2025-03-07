@@ -1,9 +1,10 @@
 ---
-- name: Install IIS and IIS Rewrite Module on Windows
+- name: Install IIS, IIS Rewrite Module, and Run PowerShell Script
   hosts: windows
   tasks:
 
     - block:
+        ## Step 1: Install IIS
         - name: Install IIS Web-Server feature
           ansible.windows.win_feature:
             name: Web-Server
@@ -15,21 +16,51 @@
           ansible.windows.win_service:
             name: W3SVC
             state: started
-          when: iis_install.changed  # Only if IIS was just installed
+          when: iis_install.changed
 
+        ## Step 2: Download IIS Rewrite Module
         - name: Download IIS Rewrite Module from Nexus
           ansible.windows.win_get_url:
             url: "http://"
             dest: "C:\\temp\\IIS_Rewrite.msi"
           register: rewrite_download
-          when: iis_install.changed  # Only if IIS was installed
+          when: iis_install.changed
 
         - name: Install IIS Rewrite Module
           ansible.windows.win_package:
             path: "C:\\temp\\IIS_Rewrite.msi"
             state: present
             arguments: "/quiet /norestart"
-          when: rewrite_download.changed  # Only if the file was just downloaded
+          when: rewrite_download.changed
 
-      name: IIS Installation and Module Setup
+        ## Step 3: Download ZIP Package from Nexus
+        - name: Download ZIP package from Nexus
+          ansible.windows.win_get_url:
+            url: "http://"
+            dest: "C:\\temp\\deployment_package.zip"
+          register: zip_download
+
+        ## Step 4: Extract ZIP Package
+        - name: Extract ZIP package
+          community.windows.win_unzip:
+            src: "C:\\temp\\deployment_package.zip"
+            dest: "C:\\temp\\deployment"
+            creates: "C:\\temp\\deployment\\script.ps1"
+          when: zip_download.changed
+
+        ## Step 5: Run PowerShell Script with JSON as a Parameter
+        - name: Execute PowerShell script
+          ansible.windows.win_shell: |
+            powershell.exe -ExecutionPolicy Bypass -File C:\temp\deployment\script.ps1 -ConfigFile C:\temp\deployment\config.json
+          register: script_output
+          when: zip_download.changed
+
+        ## Step 6: Display PowerShell Script Output
+        - name: Show PowerShell script output
+          debug:
+            msg: "{{ script_output.stdout }}"
+          when: zip_download.changed
+
+      name: IIS Setup, ZIP Extraction, and Script Execution
       when: ansible_os_family == "Windows"
+
