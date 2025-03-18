@@ -1,0 +1,47 @@
+using System;
+using System.ServiceProcess;
+using System.Timers;
+using log4net;
+using System.Reflection;
+
+public partial class MyService : ServiceBase
+{
+    private static readonly ILog log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+    private Timer idleTimer;
+    private DateTime lastActivityTime;
+    private const double idleInterval = 5 * 60 * 1000; // 5 minutes
+
+    public MyService()
+    {
+        InitializeComponent();
+        idleTimer = new Timer(idleInterval);
+        idleTimer.Elapsed += OnIdleTimerElapsed;
+        idleTimer.AutoReset = true;
+    }
+
+    protected override void OnStart(string[] args)
+    {
+        log.Info("Service started.");
+        lastActivityTime = DateTime.Now;
+        idleTimer.Start();
+    }
+
+    protected override void OnStop()
+    {
+        log.Info("Service stopped.");
+        idleTimer.Stop();
+    }
+
+    private void OnIdleTimerElapsed(object sender, ElapsedEventArgs e)
+    {
+        if ((DateTime.Now - lastActivityTime).TotalMinutes >= 5)
+        {
+            log.Info("Thread idle, waiting for messages...");
+        }
+    }
+
+    public void RegisterActivity() // Call this method when activity happens
+    {
+        lastActivityTime = DateTime.Now;
+    }
+}
