@@ -1,0 +1,17 @@
+$serviceName = "YourServiceName"
+
+$process = Get-CimInstance -ClassName Win32_Service -Filter "Name='$serviceName'" | ForEach-Object {
+    Get-Process -Id $_.ProcessId
+}
+
+if ($process) {
+    $process | Select-Object `
+        Id, 
+        ProcessName, 
+        CPU, 
+        @{Name="MemoryMB";Expression={[math]::Round($_.WorkingSet64 / 1MB, 2)}}, 
+        @{Name="PrivateMemoryMB";Expression={[math]::Round($_.PrivateMemorySize64 / 1MB, 2)}}, 
+        StartTime
+} else {
+    Write-Host "Service '$serviceName' is not running or could not be found."
+}
