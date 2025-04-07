@@ -1,17 +1,25 @@
 $serviceName = "YourServiceName"
 
-$process = Get-CimInstance -ClassName Win32_Service -Filter "Name='$serviceName'" | ForEach-Object {
-    Get-Process -Id $_.ProcessId
-}
+$svc = Get-CimInstance -ClassName Win32_Service -Filter "Name='$serviceName'"
+if ($svc -and $svc.ProcessId -ne 0) {
+    $pid = $svc.ProcessId
 
-if ($process) {
-    $process | Select-Object `
-        Id, 
-        ProcessName, 
-        CPU, 
-        @{Name="MemoryMB";Expression={[math]::Round($_.WorkingSet64 / 1MB, 2)}}, 
-        @{Name="PrivateMemoryMB";Expression={[math]::Round($_.PrivateMemorySize64 / 1MB, 2)}}, 
-        StartTime
+    $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+
+    $procInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $pid"
+
+    if ($proc -and $procInfo) {
+        [PSCustomObject]@{
+            ProcessId        = $pid
+            Name             = $proc.ProcessName
+            CPUTimeSeconds   = [math]::Round($proc.CPU, 2)
+            MemoryMB         = [math]::Round($proc.WorkingSet64 / 1MB, 2)
+            PrivateMemoryMB  = [math]::Round($proc.PrivateMemorySize64 / 1MB, 2)
+            StartTime        = $procInfo.CreationDate.ToLocalTime()
+        }
+    } else {
+        Write-Host "Process info not found (might require elevation)."
+    }
 } else {
-    Write-Host "Service '$serviceName' is not running or could not be found."
+    Write-Host "Service not found or not running."
 }
