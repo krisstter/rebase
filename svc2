@@ -1,16 +1,15 @@
 $serviceName = "YourServiceName"
 
-$svc = Get-CimInstance -ClassName Win32_Service -Filter "Name='$serviceName'"
-if ($svc -and $svc.ProcessId -ne 0) {
-    $pid = $svc.ProcessId
+$service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$serviceName'"
+if ($service -and $service.ProcessId -ne 0) {
+    $servicePid = $service.ProcessId
 
-    $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
-
-    $procInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $pid"
+    $proc = Get-Process -Id $servicePid -ErrorAction SilentlyContinue
+    $procInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $servicePid"
 
     if ($proc -and $procInfo) {
         [PSCustomObject]@{
-            ProcessId        = $pid
+            ProcessId        = $servicePid
             Name             = $proc.ProcessName
             CPUTimeSeconds   = [math]::Round($proc.CPU, 2)
             MemoryMB         = [math]::Round($proc.WorkingSet64 / 1MB, 2)
