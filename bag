@@ -1,0 +1,52 @@
+Add-Type -AssemblyName System.Collections.Concurrent
+
+# Set target directory and threshold
+$targetDirectory = "C:\Path\To\Your\Folder"
+$dateThreshold = (Get-Date).AddMonths(-3)
+
+# ConcurrentBag to track deleted count across threads
+$deletedCount = [System.Collections.Concurrent.ConcurrentBag[int]]::new()
+
+# Get list of directories including root
+$directories = [System.IO.Directory]::EnumerateDirectories($targetDirectory, "*", 'AllDirectories') + $targetDirectory
+
+# Action for each directory
+$action = {
+    param($dir, $dateThreshold, $deletedCount)
+
+    try {
+        $files = [System.IO.Directory]::EnumerateFiles($dir)
+
+        foreach ($file in $files) {
+            try {
+                $fileInfo = [System.IO.FileInfo]::new($file)
+                if ($fileInfo.CreationTime -lt $dateThreshold) {
+                    $fileInfo.Delete()
+                    $deletedCount.Add(1)
+
+                    if ($deletedCount.Count % 1000 -eq 0) {
+                        Write-Host "$($deletedCount.Count) files deleted..."
+                    }
+                }
+            } catch {
+                # optional: log or handle file deletion error
+            }
+        }
+    } catch {
+        # optional: log or handle directory enumeration error
+    }
+}
+
+# Run in parallel (adjust MaxDegreeOfParallelism based on CPU/disk capability)
+[System.Threading.Tasks.Parallel]::ForEach(
+    $directories,
+    [System.Threading.Tasks.ParallelOptions]@{
+        MaxDegreeOfParallelism = 8  # Change to your CPU core count or lower if IO-bound
+    },
+    [Action[object]]{
+        param($dir)
+        & $action $dir $dateThreshold $deletedCount
+    }
+)
+
+Write-Host "Total deleted files: $($deletedCount.Count)"
