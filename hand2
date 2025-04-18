@@ -1,30 +1,38 @@
 <#
 .SYNOPSIS
-    Safely removes all handler mappings using WebAdministration module and injects new ones.
+    Safely replaces handler mappings using WebAdministration and creates a backup of applicationHost.config.
 .DESCRIPTION
-    Uses Get-WebConfiguration to remove all <add> handler entries under system.webServer/handlers,
-    then injects new ones from an external XML <collection>. No direct file edits.
+    Backs up applicationHost.config, clears all existing handler mappings using WebAdministration,
+    and injects new mappings from an XML file with <collection> structure.
 .NOTES
-    Requires administrative privileges and the WebAdministration module.
+    Requires administrative privileges.
 #>
 
-param (
-    [Parameter(Mandatory = $true)]
-    [string]$HandlerXmlPath
-)
+$HandlerXmlPath = "web.xml"
 
 Import-Module WebAdministration
+
+$hostConfigPath = "$env:SystemRoot\System32\inetsrv\config\applicationHost.config"
+$backupPath = "$hostConfigPath.bak_" + (Get-Date -Format "yyyyMMdd_HHmmss")
 
 if (-not (Test-Path $HandlerXmlPath)) {
     Write-Error "Handler XML file not found: $HandlerXmlPath"
     exit 1
 }
 
+if (-not (Test-Path $hostConfigPath)) {
+    Write-Error "applicationHost.config not found at expected path: $hostConfigPath"
+    exit 1
+}
+
+# Backup current config
+Write-Host "Backing up applicationHost.config to $backupPath..."
+Copy-Item -Path $hostConfigPath -Destination $backupPath -Force
+
 [xml]$importXml = Get-Content $HandlerXmlPath
 
 # Remove all existing handlers
 Write-Host "Clearing existing handler mappings..."
-
 $handlers = Get-WebConfiguration -Filter "/system.webServer/handlers/*"
 foreach ($h in $handlers) {
     Remove-WebConfigurationProperty -Filter "/system.webServer/handlers" -Name "." -AtElement @{name=$h.name}
