@@ -78,8 +78,19 @@ $appHostPath = "$env:SystemRoot\\System32\\inetsrv\\config\\applicationHost.conf
 
 [xml]$config = Get-Content $appHostPath
 
-$handlers = $config.configuration.'system.webServer'.handlers
+# Use SelectSingleNode with namespace manager
+$namespaceManager = New-Object System.Xml.XmlNamespaceManager($config.NameTable)
+$namespaceManager.AddNamespace("ns", "urn:schemas-microsoft-com:xml:Configuation")
 
+# Select the handlers node (bypass namespace issues by brute-forcing path)
+$handlers = $config.SelectSingleNode("//system.webServer/handlers")
+
+if (-not $handlers) {
+    Write-Error "Could not find <handlers> section."
+    exit 1
+}
+
+# Create new XML document
 $exportDoc = New-Object xml
 $root = $exportDoc.CreateElement("handlersExport")
 $exportDoc.AppendChild($root) | Out-Null
@@ -90,6 +101,8 @@ foreach ($node in $handlers.ChildNodes) {
 }
 
 $exportDoc.Save("C:\\handler_mappings.xml")
+Write-Host "Export complete: C:\\handler_mappings.xml"
+
 ##########
 Import-Module WebAdministration
 
