@@ -1,0 +1,49 @@
+<#
+.SYNOPSIS
+    Safely removes all handler mappings using WebAdministration module and injects new ones.
+.DESCRIPTION
+    Uses Get-WebConfiguration to remove all <add> handler entries under system.webServer/handlers,
+    then injects new ones from an external XML <collection>. No direct file edits.
+.NOTES
+    Requires administrative privileges and the WebAdministration module.
+#>
+
+param (
+    [Parameter(Mandatory = $true)]
+    [string]$HandlerXmlPath
+)
+
+Import-Module WebAdministration
+
+if (-not (Test-Path $HandlerXmlPath)) {
+    Write-Error "Handler XML file not found: $HandlerXmlPath"
+    exit 1
+}
+
+[xml]$importXml = Get-Content $HandlerXmlPath
+
+# Remove all existing handlers
+Write-Host "Clearing existing handler mappings..."
+
+$handlers = Get-WebConfiguration -Filter "/system.webServer/handlers/*"
+foreach ($h in $handlers) {
+    Remove-WebConfigurationProperty -Filter "/system.webServer/handlers" -Name "." -AtElement @{name=$h.name}
+    Write-Host "✘ Removed handler: $($h.name)"
+}
+
+# Add new handlers
+Write-Host "Importing new handlers..."
+foreach ($handler in $importXml.collection.add) {
+    $params = @{}
+    foreach ($attr in $handler.Attributes) {
+        $params[$attr.Name] = $attr.Value
+    }
+
+    try {
+        New-WebHandler @params
+        Write-Host "✔ Added handler: $($params['name'])"
+    }
+    catch {
+        Write-Error "✖ Failed to add handler '$($params['name'])': $_"
+    }
+}
