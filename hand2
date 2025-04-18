@@ -1,21 +1,21 @@
 <#
 .SYNOPSIS
-    Safely replaces IIS handler mappings via direct WebAdministration access without using New-WebHandler.
+    Replaces IIS handler mappings found inside <location path=""> of applicationHost.config.
 .DESCRIPTION
-    Backs up applicationHost.config, clears all <add> elements in <handlers> using XML-based edits via WebAdministration,
-    and injects new handlers from an external XML <collection>.
-.NOTES
-    Requires administrative privileges.
+    Backs up the config, removes all <add> entries under <location path=""]/system.webServer/handlers,
+    injects new ones from a <collection>, and restarts IIS.
 #>
 
-$HandlerXmlPath ="web.xml"
-Import-Module WebAdministration
+param (
+    [Parameter(Mandatory = $true)]
+    [string]$HandlerXmlPath
+)
 
 $hostConfigPath = "$env:SystemRoot\System32\inetsrv\config\applicationHost.config"
 $backupPath = "$hostConfigPath.bak_" + (Get-Date -Format "yyyyMMdd_HHmmss")
 
 if (-not (Test-Path $HandlerXmlPath)) {
-    Write-Error "Handler XML file not found: $HandlerXmlPath"
+    Write-Error "Handler XML input file not found: $HandlerXmlPath"
     exit 1
 }
 
@@ -31,10 +31,11 @@ Copy-Item -Path $hostConfigPath -Destination $backupPath -Force
 [xml]$hostConfig = Get-Content $hostConfigPath
 [xml]$importXml = Get-Content $HandlerXmlPath
 
-# Get <handlers> node
-$handlersNode = $hostConfig.configuration.'system.webServer'.handlers
+# Locate <handlers> inside <location path="">
+$handlersNode = $hostConfig.SelectSingleNode("//location[@path='']/system.webServer/handlers")
+
 if (-not $handlersNode) {
-    Write-Error "No <handlers> section found in applicationHost.config"
+    Write-Error "No <handlers> section found under <location path=''>."
     exit 1
 }
 
@@ -48,7 +49,7 @@ foreach ($child in $handlersNode.ChildNodes) {
 }
 foreach ($node in $toRemove) {
     $handlersNode.RemoveChild($node) | Out-Null
-    Write-Host "Removed: $($node.name)"
+    Write-Host "✘ Removed: $($node.name)"
 }
 
 # Inject new <add> entries
@@ -56,10 +57,10 @@ Write-Host "Importing new handlers..."
 foreach ($handler in $importXml.collection.add) {
     $importedNode = $hostConfig.ImportNode($handler, $true)
     $handlersNode.AppendChild($importedNode) | Out-Null
-    Write-Host "Injected: $($handler.name)"
+    Write-Host "✔ Injected: $($handler.name)"
 }
 
-# Save config
+# Save changes and restart IIS
 $hostConfig.Save($hostConfigPath)
 
 Write-Host "applicationHost.config updated successfully. Restarting IIS..."
