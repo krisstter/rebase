@@ -70,3 +70,44 @@ foreach ($handler in $handlers) {
         Write-Error "Failed to add handler '$($handler.name)': $_"
     }
 }
+
+#######################
+new
+##############
+$appHostPath = "$env:SystemRoot\\System32\\inetsrv\\config\\applicationHost.config"
+
+[xml]$config = Get-Content $appHostPath
+
+$handlers = $config.configuration.'system.webServer'.handlers
+
+$exportDoc = New-Object xml
+$root = $exportDoc.CreateElement("handlersExport")
+$exportDoc.AppendChild($root) | Out-Null
+
+foreach ($node in $handlers.ChildNodes) {
+    $importedNode = $exportDoc.ImportNode($node, $true)
+    $root.AppendChild($importedNode) | Out-Null
+}
+
+$exportDoc.Save("C:\\handler_mappings.xml")
+##########
+Import-Module WebAdministration
+
+# Load XML
+[xml]$importDoc = Get-Content "C:\\handler_mappings.xml"
+$handlerNodes = $importDoc.handlersExport.ChildNodes
+
+# Clear existing handler mappings
+Remove-WebConfigurationProperty -Filter "/system.webServer/handlers" -Name "." -AtElement @{}
+
+# Import each handler
+foreach ($node in $handlerNodes) {
+    $attributes = @{}
+
+    foreach ($attr in $node.Attributes) {
+        $attributes[$attr.Name] = $attr.Value
+    }
+
+    New-WebHandler @attributes
+}
+
