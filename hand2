@@ -10,7 +10,7 @@ param (
     [Parameter(Mandatory = $true)]
     [string]$HandlerXmlPath
 )
-
+Import-Module WebAdministration
 $hostConfigPath = "$env:SystemRoot\System32\inetsrv\config\applicationHost.config"
 $backupPath = "$hostConfigPath.bak_" + (Get-Date -Format "yyyyMMdd_HHmmss")
 
@@ -39,17 +39,11 @@ if (-not $handlersNode) {
     exit 1
 }
 
-# Remove all <add> entries
-Write-Host "Removing existing handler mappings..."
-$toRemove = @()
-foreach ($child in $handlersNode.ChildNodes) {
-    if ($child.Name -eq "add") {
-        $toRemove += $child
-    }
-}
-foreach ($node in $toRemove) {
-    $handlersNode.RemoveChild($node) | Out-Null
-    Write-Host "✘ Removed: $($node.name)"
+Write-Host "Clearing existing handler mappings..."
+$handlers = Get-WebConfiguration -Filter "/system.webServer/handlers/*"
+foreach ($h in $handlers) {
+    Remove-WebConfigurationProperty -Filter "/system.webServer/handlers" -Name "." -AtElement @{name=$h.name}
+    Write-Host "Removed handler: $($h.name)"
 }
 
 # Inject new <add> entries
@@ -57,7 +51,7 @@ Write-Host "Importing new handlers..."
 foreach ($handler in $importXml.collection.add) {
     $importedNode = $hostConfig.ImportNode($handler, $true)
     $handlersNode.AppendChild($importedNode) | Out-Null
-    Write-Host "✔ Injected: $($handler.name)"
+    Write-Host "Injected: $($handler.name)"
 }
 
 # Save changes and restart IIS
