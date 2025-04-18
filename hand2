@@ -1,15 +1,14 @@
 <#
 .SYNOPSIS
-    Safely replaces handler mappings using WebAdministration and creates a backup of applicationHost.config.
+    Safely replaces IIS handler mappings via direct WebAdministration access without using New-WebHandler.
 .DESCRIPTION
-    Backs up applicationHost.config, clears all existing handler mappings using WebAdministration,
-    and injects new mappings from an XML file with <collection> structure.
+    Backs up applicationHost.config, clears all <add> elements in <handlers> using XML-based edits via WebAdministration,
+    and injects new handlers from an external XML <collection>.
 .NOTES
     Requires administrative privileges.
 #>
 
-$HandlerXmlPath = "web.xml"
-
+$HandlerXmlPath ="web.xml"
 Import-Module WebAdministration
 
 $hostConfigPath = "$env:SystemRoot\System32\inetsrv\config\applicationHost.config"
@@ -25,33 +24,43 @@ if (-not (Test-Path $hostConfigPath)) {
     exit 1
 }
 
-# Backup current config
 Write-Host "Backing up applicationHost.config to $backupPath..."
 Copy-Item -Path $hostConfigPath -Destination $backupPath -Force
 
+# Load XML
+[xml]$hostConfig = Get-Content $hostConfigPath
 [xml]$importXml = Get-Content $HandlerXmlPath
 
-# Remove all existing handlers
-Write-Host "Clearing existing handler mappings..."
-$handlers = Get-WebConfiguration -Filter "/system.webServer/handlers/*"
-foreach ($h in $handlers) {
-    Remove-WebConfigurationProperty -Filter "/system.webServer/handlers" -Name "." -AtElement @{name=$h.name}
-    Write-Host "✘ Removed handler: $($h.name)"
+# Get <handlers> node
+$handlersNode = $hostConfig.configuration.'system.webServer'.handlers
+if (-not $handlersNode) {
+    Write-Error "No <handlers> section found in applicationHost.config"
+    exit 1
 }
 
-# Add new handlers
+# Remove all <add> entries
+Write-Host "Removing existing handler mappings..."
+$toRemove = @()
+foreach ($child in $handlersNode.ChildNodes) {
+    if ($child.Name -eq "add") {
+        $toRemove += $child
+    }
+}
+foreach ($node in $toRemove) {
+    $handlersNode.RemoveChild($node) | Out-Null
+    Write-Host "Removed: $($node.name)"
+}
+
+# Inject new <add> entries
 Write-Host "Importing new handlers..."
 foreach ($handler in $importXml.collection.add) {
-    $params = @{}
-    foreach ($attr in $handler.Attributes) {
-        $params[$attr.Name] = $attr.Value
-    }
-
-    try {
-        New-WebHandler @params
-        Write-Host "✔ Added handler: $($params['name'])"
-    }
-    catch {
-        Write-Error "✖ Failed to add handler '$($params['name'])': $_"
-    }
+    $importedNode = $hostConfig.ImportNode($handler, $true)
+    $handlersNode.AppendChild($importedNode) | Out-Null
+    Write-Host "Injected: $($handler.name)"
 }
+
+# Save config
+$hostConfig.Save($hostConfigPath)
+
+Write-Host "applicationHost.config updated successfully. Restarting IIS..."
+iisreset
