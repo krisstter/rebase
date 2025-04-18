@@ -160,3 +160,8 @@ Write-Host "`nTotal handlers imported: $importedCount"
 appcmd list config /section:handlers /xml > C:\handler_export.xml
 
 appcmd set config /section:handlers /in < C:\handler_export.xml
+
+[xml]$xml = Get-Content "C:\handlers_raw.xml"
+$collection = $xml.configuration.section.collection
+
+$collection.OuterXml | Out-File "C:\handlers_clean.xml" -Encoding UTF8
