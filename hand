@@ -104,23 +104,54 @@ $exportDoc.Save("C:\\handler_mappings.xml")
 Write-Host "Export complete: C:\\handler_mappings.xml"
 
 ##########
+param (
+    [Parameter(Mandatory=$true)]
+    [string]$XmlPath
+)
+
 Import-Module WebAdministration
 
-# Load XML
-[xml]$importDoc = Get-Content "C:\\handler_mappings.xml"
-$handlerNodes = $importDoc.handlersExport.ChildNodes
+Write-Host "Loading handler mappings from: $XmlPath"
 
-# Clear existing handler mappings
-Remove-WebConfigurationProperty -Filter "/system.webServer/handlers" -Name "." -AtElement @{}
+if (-Not (Test-Path $XmlPath)) {
+    Write-Error "File not found: $XmlPath"
+    exit 1
+}
 
-# Import each handler
+try {
+    [xml]$importDoc = Get-Content $XmlPath
+    $handlerNodes = $importDoc.handlersExport.ChildNodes
+}
+catch {
+    Write-Error "Failed to parse XML: $_"
+    exit 1
+}
+
+Write-Host "Clearing all existing handler mappings..."
+try {
+    Remove-WebConfigurationProperty -Filter "/system.webServer/handlers" -Name "." -AtElement @{}
+    Write-Host "All existing handler mappings removed."
+}
+catch {
+    Write-Error "Failed to clear existing handlers: $_"
+    exit 1
+}
+
+$importedCount = 0
 foreach ($node in $handlerNodes) {
     $attributes = @{}
-
     foreach ($attr in $node.Attributes) {
         $attributes[$attr.Name] = $attr.Value
     }
 
-    New-WebHandler @attributes
+    try {
+        New-WebHandler @attributes
+        Write-Host "Imported handler: $($attributes['name'])"
+        $importedCount++
+    }
+    catch {
+        Write-Error "Failed to import handler '$($attributes['name'])': $_"
+    }
 }
 
+Write-Host "`nTotal handlers imported: $importedCount"
