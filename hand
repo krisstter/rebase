@@ -165,3 +165,5 @@ appcmd set config /section:handlers /in < C:\handler_export.xml
 $collection = $xml.configuration.section.collection
 
 $collection.OuterXml | Out-File "C:\handlers_clean.xml" -Encoding UTF8
+$content = Get-Content "handlers_clean.xml" -Raw
+[System.IO.File]::WriteAllText("handlers_clean_utf8.xml", $content, [System.Text.Encoding]::UTF8)
