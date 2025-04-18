@@ -21,19 +21,9 @@ Copy-Item -Path $hostConfigPath -Destination $backupPath -Force
 # Locate <handlers> inside <location path="">
 $handlersNode = $hostConfig.SelectSingleNode("//location[@path='']/system.webServer/handlers")
 
-if (-not $handlersNode) {
-    Write-Error "No <handlers> section found under <location path=''>."
-    exit 1
-}
-
-# Remove all <add> entries
+# Remove all <add> elements using XPath
 Write-Host "Removing existing handler mappings..."
-$toRemove = @()
-foreach ($child in $handlersNode.ChildNodes) {
-    if ($child.Name -eq "add") {
-        $toRemove += $child
-    }
-}
+$toRemove = $handlersNode.SelectNodes("add")
 foreach ($node in $toRemove) {
     $handlersNode.RemoveChild($node) | Out-Null
     Write-Host "Removed: $($node.name)"
