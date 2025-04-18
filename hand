@@ -158,3 +158,5 @@ Write-Host "`nTotal handlers imported: $importedCount"
 
 #33
 appcmd list config /section:handlers /xml > C:\handler_export.xml
+
+appcmd set config /section:handlers /in < C:\handler_export.xml
