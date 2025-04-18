@@ -13,3 +13,60 @@ foreach ($handler in $handlers) {
         New-WebHandler -Name $handler.name -Path $handler.path -Verb $handler.verb -Modules $handler.modules -ResourceType $handler.resourceType
     }
 }
+
+
+appcmd add backup BeforeHandlersReset
+
+param (
+    [Parameter(Mandatory=$true)]
+    [string]$JsonPath
+)
+
+Import-Module WebAdministration
+
+if (-Not (Test-Path $JsonPath)) {
+    Write-Error "File not found: $JsonPath"
+    exit 1
+}
+
+# Clear all existing handler mappings
+Write-Host "Removing all existing handler mappings..."
+Remove-WebConfigurationProperty -Filter "/system.webServer/handlers" -Name "." -AtElement @{ }
+
+# Load new handler mappings
+$handlers = Get-Content $JsonPath | ConvertFrom-Json
+
+foreach ($handler in $handlers) {
+    if (-not $handler.name) {
+        Write-Warning "Skipping handler with missing name."
+        continue
+    }
+
+    Write-Host "Adding handler: $($handler.name)"
+
+    $params = @{
+        Name           = $handler.name
+        Path           = $handler.path
+        Verb           = $handler.verb
+        Modules        = $handler.modules
+        ResourceType   = $handler.resourceType
+        ScriptProcessor= $handler.scriptProcessor
+        Type           = $handler.type
+        PreCondition   = $handler.preCondition
+    }
+
+    # Remove null or empty parameters
+    $cleanParams = @{}
+    foreach ($key in $params.Keys) {
+        if ($params[$key]) {
+            $cleanParams[$key] = $params[$key]
+        }
+    }
+
+    try {
+        New-WebHandler @cleanParams
+    }
+    catch {
+        Write-Error "Failed to add handler '$($handler.name)': $_"
+    }
+}
