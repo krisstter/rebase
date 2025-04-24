@@ -1,0 +1,25 @@
+function Add-IISHandlers {
+    param (
+        [xml]$HostConfig,
+        [xml]$ImportXml
+    )
+
+    try {
+        $handlersNode = $HostConfig.SelectSingleNode("//location[@path='']/system.webServer/handlers")
+        if (-not $handlersNode) {
+            throw "No <handlers> section found under <location path=''>."
+        }
+
+        foreach ($handler in $ImportXml.collection.add) {
+            $importedNode = $HostConfig.ImportNode($handler, $true)
+            $handlersNode.AppendChild($importedNode) | Out-Null
+            Write-Host "Injected: $($handler.name)"
+        }
+
+        return $HostConfig
+    }
+    catch {
+        Write-Error "Failed to add handlers: $_"
+        throw
+    }
+}
