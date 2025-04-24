@@ -1,0 +1,49 @@
+<#
+.SYNOPSIS
+    Replaces handler mappings using separate modules for removal and addition.
+.DESCRIPTION
+    Backs up applicationHost.config, removes all <add> entries, injects new handlers, and restarts IIS.
+#>
+
+param (
+    [Parameter(Mandatory = $true)]
+    [string]$HandlerXmlPath
+)
+
+try {
+    Import-Module "$PSScriptRoot\\remove_handlers.psm1"
+    Import-Module "$PSScriptRoot\\add_handlers.psm1"
+
+    $hostConfigPath = "$env:SystemRoot\\System32\\inetsrv\\config\\applicationHost.config"
+    $backupPath = "$hostConfigPath.bak_" + (Get-Date -Format "yyyyMMdd_HHmmss")
+
+    if (-not (Test-Path $HandlerXmlPath)) {
+        throw "Handler XML file not found: $HandlerXmlPath"
+    }
+
+    if (-not (Test-Path $hostConfigPath)) {
+        throw "applicationHost.config not found."
+    }
+
+    Write-Host "Backing up applicationHost.config to $backupPath..."
+    Copy-Item -Path $hostConfigPath -Destination $backupPath -Force
+
+    [xml]$hostConfig = Get-Content $hostConfigPath
+    [xml]$importXml = Get-Content $HandlerXmlPath
+
+    Write-Host "Removing existing handler mappings..."
+    $hostConfig = Remove-IISHandlers -HostConfig $hostConfig
+    $hostConfig.Save($hostConfigPath)
+
+    Write-Host "Reloading config and injecting new handlers..."
+    [xml]$hostConfig = Get-Content $hostConfigPath
+    $hostConfig = Add-IISHandlers -HostConfig $hostConfig -ImportXml $importXml
+    $hostConfig.Save($hostConfigPath)
+
+    Write-Host "applicationHost.config updated successfully. Restarting IIS..."
+    iisreset
+}
+catch {
+    Write-Error "`nFAILED: $_"
+    exit 1
+}
