@@ -1,0 +1,10 @@
+- name: Check if .NET 4.8 is already installed
+  ansible.windows.win_command: powershell.exe -Command "(Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\NET Framework Setup\\NDP\\v4\\Full').Release"
+  register: dotnet_release_check
+  changed_when: false
+  failed_when: false
+
+
+- name: Install .NET 4.8
+  ansible.windows.win_command: powershell.exe "{{ packageDownloadPath }}\\dotnet-framework-48-installer.ps1 -DeploymentType install"
+  when: dotnet_release_check.stdout|int < 528040
