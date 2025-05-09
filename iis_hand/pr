@@ -13,3 +13,14 @@
     Platform="$(Platform)"
     ToolPath="$(TargetFrameworkSDKToolsDirectory)" />
 </Target>
+
+
+$pathToAdd = "C:\Program Files (x86)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.8 Tools"
+$currentPath = [Environment]::GetEnvironmentVariable("Path", [System.EnvironmentVariableTarget]::Machine)
+
+if ($currentPath -notlike "*$pathToAdd*") {
+    [Environment]::SetEnvironmentVariable("Path", "$currentPath;$pathToAdd", [System.EnvironmentVariableTarget]::Machine)
+    Write-Host "Path updated. Restart your terminal or log off and on again for changes to take effect." -ForegroundColor Green
+} else {
+    Write-Host "Path already contains the specified directory." -ForegroundColor Yellow
+}
