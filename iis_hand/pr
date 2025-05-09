@@ -24,3 +24,35 @@ if ($currentPath -notlike "*$pathToAdd*") {
 } else {
     Write-Host "Path already contains the specified directory." -ForegroundColor Yellow
 }
+
+
+$rootDir = "C:\Path\To\Your\Solution"  # <-- Change this to your solution root
+$pattern = '\[XmlRoot\s*\(\s*["'']([^"'']+)["'']'  # Regex to match XmlRoot("Name")
+
+$matches = @()
+
+Get-ChildItem -Path $rootDir -Recurse -Include *.cs | ForEach-Object {
+    $content = Get-Content $_.FullName -Raw
+    if ($content -match $pattern) {
+        [regex]::Matches($content, $pattern) | ForEach-Object {
+            $matches += [PSCustomObject]@{
+                File = $_.Path
+                XmlElementName = $_.Groups[1].Value
+            }
+        }
+    }
+}
+
+# Group by XML element name to find duplicates
+$grouped = $matches | Group-Object XmlElementName | Where-Object { $_.Count -gt 1 }
+
+if ($grouped.Count -eq 0) {
+    Write-Host "✅ No duplicate XmlRoot element names found." -ForegroundColor Green
+} else {
+    Write-Host "`n⚠️ Duplicate XmlRoot element names found:`n" -ForegroundColor Yellow
+    foreach ($g in $grouped) {
+        Write-Host "Element: [$($g.Name)]"
+        $g.Group | ForEach-Object { Write-Host " - $($_.File)" }
+        Write-Host ""
+    }
+}
