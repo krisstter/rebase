@@ -1,0 +1,15 @@
+<PropertyGroup>
+  <GenerateSerializationAssemblies>On</GenerateSerializationAssemblies>
+</PropertyGroup>
+
+<Target Name="RunSGen" AfterTargets="Build">
+  <SGen
+    BuildAssemblyName="$(AssemblyName)"
+    BuildAssemblyPath="$(TargetPath)"
+    OutputPath="$(TargetDir)"
+    UseProxyTypes="true"
+    KeyContainer=""
+    KeyFile=""
+    Platform="$(Platform)"
+    ToolPath="$(TargetFrameworkSDKToolsDirectory)" />
+</Target>
