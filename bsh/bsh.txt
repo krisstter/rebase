@@ -1,0 +1,41 @@
+#!/bin/bash
+
+
+VENV_PATH=$(ansible --version | grep "python version" | sed -E 's|.*\((.*)/bin/python\)|\1|')
+
+PYTHON="$VENV_PATH/bin/python"
+PIP="$PYTHON -m pip"
+GALAXY="$VENV_PATH/bin/ansible-galaxy"
+
+
+COLLECTION_FILE="collections.txt"
+
+if [[ ! -f "$COLLECTION_FILE" ]]; then
+  echo "Collection list file not found: $COLLECTION_FILE"
+  exit 1
+fi
+
+while IFS= read -r COLLECTION; do
+  # Skip empty or comment lines
+  [[ -z "$COLLECTION" || "$COLLECTION" =~ ^# ]] && continue
+
+  echo "Installing collection: $COLLECTION"
+  $GALAXY collection install "$COLLECTION" --force || {
+    echo "Failed to install $COLLECTION"
+    continue
+  }
+
+
+  COLLECTION_DIR=$(echo "$COLLECTION" | sed 's/\./\//g')
+
+ 
+  SITE_PACKAGES=$($PYTHON -c "import site; print(site.getsitepackages()[0])")
+  REQ_FILE="$SITE_PACKAGES/ansible_collections/$COLLECTION_DIR/requirements.txt"
+
+  if [[ -f "$REQ_FILE" ]]; then
+    echo "Installing requirements for $COLLECTION"
+    $PIP install -r "$REQ_FILE"
+  else
+    echo "No requirements.txt found for $COLLECTION"
+  fi
+done < "$COLLECTION_FILE"
