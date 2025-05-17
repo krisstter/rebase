@@ -1,0 +1,3 @@
+# Azure and common modules
+azure.azcollection
+community.general
