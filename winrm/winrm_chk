@@ -1,2 +1,3 @@
 winrm enumerate winrm/config/Listener
+winrm set winrm/config/service '@{AllowUnencrypted="true"}'
 winrm get winrm/config/service
