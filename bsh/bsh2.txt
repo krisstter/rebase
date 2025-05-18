@@ -1,0 +1,38 @@
+# === Configurable paths ===
+PYTHON=$(command -v python3)  # You can override this to use a specific Python version
+PIP="$PYTHON -m pip"
+GALAXY=$(command -v ansible-galaxy)
+COLLECTION_FILE="collections.txt"
+COLLECTION_PATH="$HOME/.ansible/collections"
+
+# === Validate input file ===
+if [[ ! -f "$COLLECTION_FILE" ]]; then
+  echo "Collection list file not found: $COLLECTION_FILE"
+  exit 1
+fi
+
+# === Read and install collections ===
+while IFS= read -r COLLECTION; do
+  # Skip empty lines or comments
+  [[ -z "$COLLECTION" || "$COLLECTION" =~ ^# ]] && continue
+
+  echo "Installing collection: $COLLECTION"
+  $GALAXY collection install "$COLLECTION" --force --collections-path "$COLLECTION_PATH" || {
+    echo "Failed to install $COLLECTION"
+    continue
+  }
+
+  # Convert 'namespace.collection' to 'namespace/collection'
+  COLLECTION_DIR=$(echo "$COLLECTION" | sed 's/\./\//g')
+
+  # Check for and install any Python requirements
+  REQ_FILE="$COLLECTION_PATH/ansible_collections/$COLLECTION_DIR/requirements.txt"
+
+  if [[ -f "$REQ_FILE" ]]; then
+    echo "Installing Python requirements for $COLLECTION"
+    $PIP install -r "$REQ_FILE"
+  else
+    echo "No requirements.txt found for $COLLECTION"
+  fi
+
+done < "$COLLECTION_FILE"
