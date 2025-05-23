@@ -39,3 +39,6 @@ foreach ($f in $batch) {
 }
 
 Write-Host "Finished. Total deleted: $deletedCount"
+
+
+robocopy d:\empty "" /MIR /NFL /NDL /NJH /NJS /NP /R:1 /W:1
