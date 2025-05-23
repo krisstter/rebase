@@ -1,0 +1,41 @@
+$targetPath = ""
+$batchSize = 10000
+$deletedCount = 0
+
+try {
+    $allFiles = [System.IO.Directory]::EnumerateFiles($targetPath, "*", [System.IO.SearchOption]::AllDirectories)
+} catch {
+    Write-Error "Failed to enumerate files: $_"
+    return
+}
+
+$batch = @()
+
+foreach ($file in $allFiles) {
+    $batch += $file
+
+    if ($batch.Count -ge $batchSize) {
+        foreach ($f in $batch) {
+            try {
+                [System.IO.File]::Delete($f)
+                $deletedCount++
+            } catch {
+                Write-Verbose "Failed to delete $f: $_"
+            }
+        }
+        Write-Host "$deletedCount files deleted so far..."
+        $batch = @()
+    }
+}
+
+# Final batch
+foreach ($f in $batch) {
+    try {
+        [System.IO.File]::Delete($f)
+        $deletedCount++
+    } catch {
+        Write-Verbose "Failed to delete $f: $_"
+    }
+}
+
+Write-Host "Finished. Total deleted: $deletedCount"
