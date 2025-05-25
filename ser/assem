@@ -1,0 +1,6 @@
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Fusion]
+"EnableLog"=dword:00000000
+"ForceLog"=dword:00000000
+"LogFailures"=dword:00000000
+"LogResourceBinds"=dword:00000000
