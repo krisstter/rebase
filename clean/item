@@ -6,22 +6,33 @@ function Remove-Files($days, $path) {
         return
     }
 
-    # Process all items (files and directories)
-    Get-ChildItem -Path $path -Recurse |
-    Sort-Object FullName -Descending |
+    # First remove files
+    Get-ChildItem -Path $path -Recurse -File -Force -ErrorAction SilentlyContinue |
+    Where-Object { $_.LastWriteTime -lt $lastDateToKeep } |
     ForEach-Object {
         try {
-            if ($_.LastWriteTime -lt $lastDateToKeep -and (Test-Path $_.FullName)) {
-                # Preview with Get-Item
-                $item = Get-Item $_.FullName -ErrorAction SilentlyContinue
-                if ($item) {
-                    Write-Output "Preparing to delete: $($item.FullName) (LastWriteTime: $($item.LastWriteTime))"
-                    Remove-Item -Path $item.FullName -Force -Recurse
-                    Write-Output "Removed: $($item.FullName)"
-                }
+            $item = Get-Item $_.FullName -ErrorAction SilentlyContinue
+            if ($item) {
+                Write-Output "Deleting file: $($item.FullName)"
+                Remove-Item -Path $item.FullName -Force
             }
         } catch {
-            Write-Error "Failed to remove item: $_"
+            Write-Error "Error deleting file: $_"
+        }
+    }
+
+    # Then remove folders
+    Get-ChildItem -Path $path -Recurse -Directory -Force -ErrorAction SilentlyContinue |
+    Where-Object { $_.LastWriteTime -lt $lastDateToKeep } |
+    ForEach-Object {
+        try {
+            $item = Get-Item $_.FullName -ErrorAction SilentlyContinue
+            if ($item -and (Test-Path $item.FullName)) {
+                Write-Output "Deleting directory: $($item.FullName)"
+                Remove-Item -Path $item.FullName -Force -Recurse
+            }
+        } catch {
+            Write-Error "Error deleting directory: $_"
         }
     }
 }
