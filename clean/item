@@ -1,0 +1,27 @@
+function Remove-Files($days, $path) {
+    $lastDateToKeep = (Get-Date).AddDays(-$days)
+
+    if (-not (Test-Path $path)) {
+        Write-Warning "Path '$path' does not exist. Skipping..."
+        return
+    }
+
+    # Process all items (files and directories)
+    Get-ChildItem -Path $path -Recurse |
+    Sort-Object FullName -Descending |
+    ForEach-Object {
+        try {
+            if ($_.LastWriteTime -lt $lastDateToKeep -and (Test-Path $_.FullName)) {
+                # Preview with Get-Item
+                $item = Get-Item $_.FullName -ErrorAction SilentlyContinue
+                if ($item) {
+                    Write-Output "Preparing to delete: $($item.FullName) (LastWriteTime: $($item.LastWriteTime))"
+                    Remove-Item -Path $item.FullName -Force -Recurse
+                    Write-Output "Removed: $($item.FullName)"
+                }
+            }
+        } catch {
+            Write-Error "Failed to remove item: $_"
+        }
+    }
+}
