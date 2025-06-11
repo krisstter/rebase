@@ -6,33 +6,31 @@ function Remove-Files($days, $path) {
         return
     }
 
-    # First remove files
-    Get-ChildItem -Path $path -Recurse -File -Force -ErrorAction SilentlyContinue |
-    Where-Object { $_.LastWriteTime -lt $lastDateToKeep } |
-    ForEach-Object {
+    # --- 1. Remove old files ---
+    $files = Get-ChildItem -Path $path -Recurse -File -Force -ErrorAction SilentlyContinue |
+             Where-Object { $_.LastWriteTime -lt $lastDateToKeep }
+
+    foreach ($file in $files) {
         try {
-            $item = Get-Item $_.FullName -ErrorAction SilentlyContinue
-            if ($item) {
-                Write-Output "Deleting file: $($item.FullName)"
-                Remove-Item -Path $item.FullName -Force
-            }
+            Write-Output "Deleting file: $($file.FullName)"
+            Remove-Item $file.FullName -Force -ErrorAction Stop
         } catch {
-            Write-Error "Error deleting file: $_"
+            Write-Warning "Failed to delete file: $($file.FullName) — $($_.Exception.Message)"
         }
     }
 
-    # Then remove folders
-    Get-ChildItem -Path $path -Recurse -Directory -Force -ErrorAction SilentlyContinue |
-    Where-Object { $_.LastWriteTime -lt $lastDateToKeep } |
-    ForEach-Object {
-        try {
-            $item = Get-Item $_.FullName -ErrorAction SilentlyContinue
-            if ($item -and (Test-Path $item.FullName)) {
-                Write-Output "Deleting directory: $($item.FullName)"
-                Remove-Item -Path $item.FullName -Force -Recurse
+    # --- 2. Remove old folders (deepest first for safety) ---
+    $folders = Get-ChildItem -Path $path -Recurse -Directory -Force -ErrorAction SilentlyContinue |
+               Where-Object { $_.LastWriteTime -lt $lastDateToKeep }
+
+    foreach ($folder in $folders) {
+        if (Test-Path $folder.FullName) {
+            try {
+                Write-Output "Deleting directory: $($folder.FullName)"
+                Remove-Item $folder.FullName -Recurse -Force -ErrorAction Stop
+            } catch {
+                Write-Warning "Failed to delete folder: $($folder.FullName) — $($_.Exception.Message)"
             }
-        } catch {
-            Write-Error "Error deleting directory: $_"
         }
     }
 }
