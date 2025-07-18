@@ -3,80 +3,90 @@ param (
     [switch]$DryRun
 )
 
-# Setup
 $timestamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
 $tempDir = "$env:TEMP\cleanup_jobs_$timestamp"
 $null = New-Item -Path $tempDir -ItemType Directory -Force
+$logDir = "$tempDir\logs"
+$null = New-Item -Path $logDir -ItemType Directory -Force
 
 if (-not (Test-Path $settingsFile)) {
-    Write-Error "Settings file '$settingsFile' not found."
+    Write-Error "Settings file $settingsFile not found."
     exit 1
 }
 
 try {
     $settings = Get-Content -Raw -Path $settingsFile | ConvertFrom-Json
 } catch {
-    Write-Error "Failed to parse JSON from $settingsFile: $_"
+    Write-Error "Failed to parse JSON from $settingsFile"
     exit 1
 }
 
-# Launch a job per path
+# Start one job per path
 $jobs = @()
 $index = 0
+
 foreach ($item in $settings) {
-    $jobSettings = @{
-        path = $item.path
-        daystokeep = [int]$item.daystokeep
-        dryRun = $DryRun.IsPresent
-        outputPath = "$tempDir\job_$index.json"
-    }
+    $path = $item.path
+    $keepDays = [int]$item.daystokeep
+    $reportPath = "$tempDir\job_$index.json"
+    $logPath = "$logDir\job_$index.log"
+
+    Write-Host "Starting cleanup job $index for: $path"
 
     $job = Start-Job -ScriptBlock {
-        param ($path, $daystokeep, $dryRun, $outputPath)
+        param ($path, $keepDays, $dryRun, $reportPath, $logPath)
 
         $now = Get-Date
-        $cutoff = $now.AddDays(-$daystokeep)
+        $cutoff = $now.AddDays(-$keepDays)
 
         $entry = [ordered]@{
-            path = $path
-            daystokeep = $daystokeep
-            cutoffDate = $cutoff.ToString("yyyy-MM-dd HH:mm:ss")
-            deletedFileCount = 0
+            path               = $path
+            daystokeep         = $keepDays
+            cutoffDate         = $cutoff.ToString("yyyy-MM-dd HH:mm:ss")
+            deletedFileCount   = 0
             deletedFolderCount = 0
             skippedFolderCount = 0
-            note = $null
+            note               = $null
         }
+
+        Add-Content $logPath "[$(Get-Date -Format HH:mm:ss)] Starting cleanup for: $path"
 
         if (-not (Test-Path $path)) {
             $entry.note = "Path does not exist"
+            Add-Content $logPath "[$(Get-Date -Format HH:mm:ss)] Path does not exist"
         } else {
-            # Delete root files
             $files = Get-ChildItem -Path $path -File -Force -ErrorAction SilentlyContinue
             foreach ($file in $files) {
                 if ($file.LastWriteTime -lt $cutoff) {
                     if ($dryRun) {
                         $entry.deletedFileCount++
+                        Add-Content $logPath "Would delete file: $($file.FullName)"
                     } else {
                         try {
-                            Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
+                            [System.IO.File]::Delete($file.FullName)
                             $entry.deletedFileCount++
-                        } catch { }
+                            Add-Content $logPath "Deleted file: $($file.FullName)"
+                        } catch {
+                            Add-Content $logPath "Failed to delete file: $($file.FullName)"
+                        }
                     }
                 }
             }
 
-            # Delete subfolders by folder LastWriteTime only
             $dirs = Get-ChildItem -Path $path -Directory -Force -ErrorAction SilentlyContinue
             foreach ($dir in $dirs) {
                 if ($dir.LastWriteTime -lt $cutoff) {
                     if ($dryRun) {
                         $entry.deletedFolderCount++
+                        Add-Content $logPath "Would delete folder: $($dir.FullName)"
                     } else {
                         try {
                             [System.IO.Directory]::Delete($dir.FullName, $true)
                             $entry.deletedFolderCount++
+                            Add-Content $logPath "Deleted folder: $($dir.FullName)"
                         } catch {
                             $entry.skippedFolderCount++
+                            Add-Content $logPath "Failed to delete folder: $($dir.FullName)"
                         }
                     }
                 } else {
@@ -85,19 +95,21 @@ foreach ($item in $settings) {
             }
         }
 
-        $entry | ConvertTo-Json -Depth 3 | Set-Content -Path $outputPath -Encoding UTF8
-    } -ArgumentList $jobSettings.path, $jobSettings.daystokeep, $jobSettings.dryRun, $jobSettings.outputPath
+        Add-Content $logPath "[$(Get-Date -Format HH:mm:ss)] Job complete"
+        $entry | ConvertTo-Json -Depth 3 | Set-Content -Path $reportPath -Encoding UTF8
+
+    } -ArgumentList $path, $keepDays, $DryRun.IsPresent, $reportPath, $logPath
 
     $jobs += $job
     $index++
 }
 
 # Wait for all jobs
-Write-Host "Waiting for cleanup jobs to complete..."
+Write-Host "`nWaiting for all cleanup jobs to finish..."
 Wait-Job -Job $jobs
-Write-Host "All jobs finished. Generating summary..."
+Write-Host "All jobs completed."
 
-# Merge results
+# Collect job summaries
 $summary = [ordered]@{
     startedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
     endedAt   = $null
@@ -105,13 +117,10 @@ $summary = [ordered]@{
     entries   = @()
 }
 
-foreach ($job in $jobs) {
-    $jobDataPath = ($job.ChildJobs[0].Command | Out-String) -match 'job_(\d+).json' | Out-Null
-    $jobId = $Matches[1]
-    $jobOutputFile = "$tempDir\job_$jobId.json"
-
-    if (Test-Path $jobOutputFile) {
-        $data = Get-Content -Raw -Path $jobOutputFile | ConvertFrom-Json
+for ($i = 0; $i -lt $jobs.Count; $i++) {
+    $jobFile = "$tempDir\job_$i.json"
+    if (Test-Path $jobFile) {
+        $data = Get-Content -Raw -Path $jobFile | ConvertFrom-Json
         $summary.entries += $data
     }
 }
@@ -119,10 +128,8 @@ foreach ($job in $jobs) {
 $summary.endedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
 
 # Write final report
-$finalReportPath = "cleanup_summary_$timestamp.json"
-$summary | ConvertTo-Json -Depth 4 | Set-Content -Path $finalReportPath -Encoding UTF8
-Write-Host "Summary saved to $finalReportPath"
+$finalReport = "cleanup_summary_$timestamp.json"
+$summary | ConvertTo-Json -Depth 4 | Set-Content -Path $finalReport -Encoding UTF8
 
-# Optional cleanup
-Remove-Job -Job $jobs -Force
-Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+Write-Host "`nCleanup complete. Summary saved to: $finalReport"
+Write-Host "Per-job logs are in: $logDir"
