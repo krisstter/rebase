@@ -3,6 +3,11 @@ param (
     [switch]$DryRun
 )
 
+# Setup
+$timestamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
+$tempDir = "$env:TEMP\cleanup_jobs_$timestamp"
+$null = New-Item -Path $tempDir -ItemType Directory -Force
+
 if (-not (Test-Path $settingsFile)) {
     Write-Error "Settings file '$settingsFile' not found."
     exit 1
@@ -15,99 +20,109 @@ try {
     exit 1
 }
 
-$now = Get-Date
-$report = @{
-    startedAt = $now
-    endedAt = $null
-    dryRun = $DryRun.IsPresent
-    entries = @()
-}
-
+# Launch a job per path
+$jobs = @()
+$index = 0
 foreach ($item in $settings) {
-    $keepDays = [int]$item.daystokeep
-    $path = $item.path
-    $cutoff = $now.AddDays(-$keepDays)
-
-    $entry = @{
-        path = $path
-        daystokeep = $keepDays
-        cutoffDate = $cutoff
-        deletedFileCount = 0
-        deletedFolderCount = 0
-        skippedFolderCount = 0
+    $jobSettings = @{
+        path = $item.path
+        daystokeep = [int]$item.daystokeep
+        dryRun = $DryRun.IsPresent
+        outputPath = "$tempDir\job_$index.json"
     }
 
-    if (-not (Test-Path $path)) {
-        Write-Warning "Path '$path' does not exist. Skipping..."
-        $entry.note = "Path does not exist"
-        $report.entries += $entry
-        continue
-    }
+    $job = Start-Job -ScriptBlock {
+        param ($path, $daystokeep, $dryRun, $outputPath)
 
-    Write-Host "`n[+] Cleaning: $path (older than $keepDays days)..."
+        $now = Get-Date
+        $cutoff = $now.AddDays(-$daystokeep)
 
-    # Delete files in root
-    $rootFiles = Get-ChildItem -Path $path -File -Force -ErrorAction SilentlyContinue
-    foreach ($file in $rootFiles) {
-        if ($file.LastWriteTime -lt $cutoff) {
-            if ($DryRun) {
-                Write-Host "[DryRun] Would delete file: $($file.FullName)"
-            } else {
-                try {
-                    Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
-                    Write-Host "Deleted file: $($file.FullName)"
-                    $entry.deletedFileCount++
-                } catch {
-                    Write-Warning "Failed to delete file '$($file.FullName)': $_"
-                }
-            }
-            if ($DryRun) { $entry.deletedFileCount++ }
+        $entry = [ordered]@{
+            path = $path
+            daystokeep = $daystokeep
+            cutoffDate = $cutoff.ToString("yyyy-MM-dd HH:mm:ss")
+            deletedFileCount = 0
+            deletedFolderCount = 0
+            skippedFolderCount = 0
+            note = $null
         }
-    }
 
-    # Delete subfolders
-    $subdirs = Get-ChildItem -Path $path -Directory -Force -ErrorAction SilentlyContinue
-    foreach ($folder in $subdirs) {
-        if ($folder.LastWriteTime -lt $cutoff) {
-            if ($DryRun) {
-                Write-Host "[DryRun] Would delete folder: $($folder.FullName)"
-                $entry.deletedFolderCount++
-            } else {
-                try {
-                    Remove-Item -LiteralPath $folder.FullName -Recurse -Force -ErrorAction Stop
-                    Write-Host "Deleted folder: $($folder.FullName)"
-                    $entry.deletedFolderCount++
-                } catch {
-                    $entry.skippedFolderCount++
-                    Write-Warning "Failed to delete folder '$($folder.FullName)': $_"
-                }
-            }
+        if (-not (Test-Path $path)) {
+            $entry.note = "Path does not exist"
         } else {
-            $entry.skippedFolderCount++
-        }
-    }
+            # Delete root files
+            $files = Get-ChildItem -Path $path -File -Force -ErrorAction SilentlyContinue
+            foreach ($file in $files) {
+                if ($file.LastWriteTime -lt $cutoff) {
+                    if ($dryRun) {
+                        $entry.deletedFileCount++
+                    } else {
+                        try {
+                            Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
+                            $entry.deletedFileCount++
+                        } catch { }
+                    }
+                }
+            }
 
-    $report.entries += $entry
+            # Delete subfolders by folder LastWriteTime only
+            $dirs = Get-ChildItem -Path $path -Directory -Force -ErrorAction SilentlyContinue
+            foreach ($dir in $dirs) {
+                if ($dir.LastWriteTime -lt $cutoff) {
+                    if ($dryRun) {
+                        $entry.deletedFolderCount++
+                    } else {
+                        try {
+                            [System.IO.Directory]::Delete($dir.FullName, $true)
+                            $entry.deletedFolderCount++
+                        } catch {
+                            $entry.skippedFolderCount++
+                        }
+                    }
+                } else {
+                    $entry.skippedFolderCount++
+                }
+            }
+        }
+
+        $entry | ConvertTo-Json -Depth 3 | Set-Content -Path $outputPath -Encoding UTF8
+    } -ArgumentList $jobSettings.path, $jobSettings.daystokeep, $jobSettings.dryRun, $jobSettings.outputPath
+
+    $jobs += $job
+    $index++
 }
 
-$report.endedAt = Get-Date
+# Wait for all jobs
+Write-Host "Waiting for cleanup jobs to complete..."
+Wait-Job -Job $jobs
+Write-Host "All jobs finished. Generating summary..."
 
-# Save summary to JSON
-$timestamp = $now.ToString("yyyyMMdd_HHmmss")
-$summaryPath = "cleanup_summary_$timestamp.json"
-$report | ConvertTo-Json -Depth 3 | Set-Content -Path $summaryPath -Encoding UTF8
+# Merge results
+$summary = [ordered]@{
+    startedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    endedAt   = $null
+    dryRun    = $DryRun.IsPresent
+    entries   = @()
+}
 
-# Console summary table
-Write-Host "`nSummary Table:`n"
-$report.entries | ForEach-Object {
-    [PSCustomObject]@{
-        Path            = $_.path
-        DaysToKeep      = $_.daystokeep
-        FilesDeleted    = $_.deletedFileCount
-        FoldersDeleted  = $_.deletedFolderCount
-        FoldersSkipped  = $_.skippedFolderCount
-        Note            = $_.note
+foreach ($job in $jobs) {
+    $jobDataPath = ($job.ChildJobs[0].Command | Out-String) -match 'job_(\d+).json' | Out-Null
+    $jobId = $Matches[1]
+    $jobOutputFile = "$tempDir\job_$jobId.json"
+
+    if (Test-Path $jobOutputFile) {
+        $data = Get-Content -Raw -Path $jobOutputFile | ConvertFrom-Json
+        $summary.entries += $data
     }
-} | Format-Table -AutoSize
+}
 
-Write-Host "`nCleanup complete. Summary saved to $summaryPath"
+$summary.endedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+
+# Write final report
+$finalReportPath = "cleanup_summary_$timestamp.json"
+$summary | ConvertTo-Json -Depth 4 | Set-Content -Path $finalReportPath -Encoding UTF8
+Write-Host "Summary saved to $finalReportPath"
+
+# Optional cleanup
+Remove-Job -Job $jobs -Force
+Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
