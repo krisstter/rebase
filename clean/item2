@@ -1,0 +1,113 @@
+param (
+    [string]$settingsFile,
+    [switch]$DryRun
+)
+
+if (-not (Test-Path $settingsFile)) {
+    Write-Error "Settings file '$settingsFile' not found."
+    exit 1
+}
+
+try {
+    $settings = Get-Content -Raw -Path $settingsFile | ConvertFrom-Json
+} catch {
+    Write-Error "Failed to parse JSON from $settingsFile: $_"
+    exit 1
+}
+
+$now = Get-Date
+$report = @{
+    startedAt = $now
+    endedAt = $null
+    dryRun = $DryRun.IsPresent
+    entries = @()
+}
+
+foreach ($item in $settings) {
+    $keepDays = [int]$item.daystokeep
+    $path = $item.path
+    $cutoff = $now.AddDays(-$keepDays)
+
+    $entry = @{
+        path = $path
+        daystokeep = $keepDays
+        cutoffDate = $cutoff
+        deletedFileCount = 0
+        deletedFolderCount = 0
+        skippedFolderCount = 0
+    }
+
+    if (-not (Test-Path $path)) {
+        Write-Warning "Path '$path' does not exist. Skipping..."
+        $entry.note = "Path does not exist"
+        $report.entries += $entry
+        continue
+    }
+
+    Write-Host "`n[+] Cleaning: $path (older than $keepDays days)..."
+
+    # Delete files in root
+    $rootFiles = Get-ChildItem -Path $path -File -Force -ErrorAction SilentlyContinue
+    foreach ($file in $rootFiles) {
+        if ($file.LastWriteTime -lt $cutoff) {
+            if ($DryRun) {
+                Write-Host "[DryRun] Would delete file: $($file.FullName)"
+            } else {
+                try {
+                    Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
+                    Write-Host "Deleted file: $($file.FullName)"
+                    $entry.deletedFileCount++
+                } catch {
+                    Write-Warning "Failed to delete file '$($file.FullName)': $_"
+                }
+            }
+            if ($DryRun) { $entry.deletedFileCount++ }
+        }
+    }
+
+    # Delete subfolders
+    $subdirs = Get-ChildItem -Path $path -Directory -Force -ErrorAction SilentlyContinue
+    foreach ($folder in $subdirs) {
+        if ($folder.LastWriteTime -lt $cutoff) {
+            if ($DryRun) {
+                Write-Host "[DryRun] Would delete folder: $($folder.FullName)"
+                $entry.deletedFolderCount++
+            } else {
+                try {
+                    Remove-Item -LiteralPath $folder.FullName -Recurse -Force -ErrorAction Stop
+                    Write-Host "Deleted folder: $($folder.FullName)"
+                    $entry.deletedFolderCount++
+                } catch {
+                    $entry.skippedFolderCount++
+                    Write-Warning "Failed to delete folder '$($folder.FullName)': $_"
+                }
+            }
+        } else {
+            $entry.skippedFolderCount++
+        }
+    }
+
+    $report.entries += $entry
+}
+
+$report.endedAt = Get-Date
+
+# Save summary to JSON
+$timestamp = $now.ToString("yyyyMMdd_HHmmss")
+$summaryPath = "cleanup_summary_$timestamp.json"
+$report | ConvertTo-Json -Depth 3 | Set-Content -Path $summaryPath -Encoding UTF8
+
+# Console summary table
+Write-Host "`nSummary Table:`n"
+$report.entries | ForEach-Object {
+    [PSCustomObject]@{
+        Path            = $_.path
+        DaysToKeep      = $_.daystokeep
+        FilesDeleted    = $_.deletedFileCount
+        FoldersDeleted  = $_.deletedFolderCount
+        FoldersSkipped  = $_.skippedFolderCount
+        Note            = $_.note
+    }
+} | Format-Table -AutoSize
+
+Write-Host "`nCleanup complete. Summary saved to $summaryPath"
