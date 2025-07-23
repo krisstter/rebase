@@ -35,7 +35,7 @@ foreach ($item in $settings) {
     $index++
 }
 
-# --- Modular functions inside job script ---
+# --- Job script ---
 $jobScript = {
     param ($path, $keepDays, $dryRun, $reportPath, $logPath)
 
@@ -153,20 +153,33 @@ $runningJobs = @()
 $jobIndex = 0
 
 foreach ($jobData in $allJobs) {
+    if (-not $jobData.path) {
+        Write-Warning "Job $jobIndex has null or empty path. Skipping..."
+        $jobIndex++
+        continue
+    }
+
     Write-Host "[Start] Job $jobIndex - $($jobData.path)"
 
     $job = Start-Job -ScriptBlock $jobScript `
         -ArgumentList $jobData.path, $jobData.daystokeep, $DryRun.IsPresent, $jobData.reportPath, $jobData.logPath
 
-    $runningJobs += $job
+    if ($job) {
+        $runningJobs += $job
+    } else {
+        Write-Warning "Failed to start job $jobIndex - $($jobData.path)"
+    }
+
     $jobIndex++
 
     if ($runningJobs.Count -ge $maxConcurrent) {
         Write-Host "[Throttle] Max $maxConcurrent jobs reached. Waiting..."
-        Wait-Job -Job $runningJobs
+        Wait-Job -Job ($runningJobs | Where-Object { $_ -ne $null })
         foreach ($j in $runningJobs) {
-            Receive-Job -Job $j | Out-Null
-            Remove-Job -Job $j
+            if ($j) {
+                try { Receive-Job -Job $j | Out-Null } catch { Write-Warning "Failed to receive job: $_" }
+                try { Remove-Job -Job $j } catch { Write-Warning "Failed to remove job: $_" }
+            }
         }
         $runningJobs.Clear()
     }
@@ -175,10 +188,12 @@ foreach ($jobData in $allJobs) {
 # Final batch
 if ($runningJobs.Count -gt 0) {
     Write-Host "[Throttle] Final batch running..."
-    Wait-Job -Job $runningJobs
+    Wait-Job -Job ($runningJobs | Where-Object { $_ -ne $null })
     foreach ($j in $runningJobs) {
-        Receive-Job -Job $j | Out-Null
-        Remove-Job -Job $j
+        if ($j) {
+            try { Receive-Job -Job $j | Out-Null } catch { Write-Warning "Failed to receive job: $_" }
+            try { Remove-Job -Job $j } catch { Write-Warning "Failed to remove job: $_" }
+        }
     }
 }
 
