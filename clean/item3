@@ -35,14 +35,15 @@ foreach ($item in $settings) {
     $index++
 }
 
-# --- Modular functions ---
+# --- Modular functions inside job script ---
 $jobScript = {
+    param ($path, $keepDays, $dryRun, $reportPath, $logPath)
+
     function Rename-OldItems {
         param ($path, $cutoff, $markDate, $dryRun, $logPath, $entry)
 
         $markPrefix = "DELETE_BY_" + $markDate.ToString("yyyyMMdd") + "__"
 
-        # --- Files ---
         $files = Get-ChildItem -Path $path -File -Force -ErrorAction SilentlyContinue
         $oldFiles = $files.Where({ $_.LastWriteTime -lt $cutoff }, 'Default')
         foreach ($file in $oldFiles) {
@@ -63,7 +64,6 @@ $jobScript = {
             }
         }
 
-        # --- Folders ---
         $dirs = Get-ChildItem -Path $path -Directory -Force -ErrorAction SilentlyContinue
         $oldDirs = $dirs.Where({ $_.LastWriteTime -lt $cutoff }, 'Default')
         foreach ($dir in $oldDirs) {
@@ -115,8 +115,6 @@ $jobScript = {
             }
         }
     }
-
-    param ($path, $keepDays, $dryRun, $reportPath, $logPath)
 
     $now = Get-Date
     $cutoff = $now.AddDays(-$keepDays)
