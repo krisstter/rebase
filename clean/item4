@@ -1,13 +1,11 @@
-param (
+param(
     [string]$settingsFile,
     [switch]$DryRun,
     [string]$Tag = "default",
     [int]$MaxConcurrent = 40,
-    [int]$WaitTimeoutSec = 600,     # 10 minutes
-    [int]$KillHungAfterSec = 3600   # 1 hour
+    [int]$WaitTimeoutSec = 600,
+    [int]$KillHungAfterSec = 3600
 )
-
-Write-Output "[START] Cleanup started at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 
 $timestamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
 $tempDir = "$env:TEMP\cleanup_jobs_${timestamp}_$Tag"
@@ -15,26 +13,17 @@ $null = New-Item -Path $tempDir -ItemType Directory -Force
 $logDir = "$tempDir\logs"
 $null = New-Item -Path $logDir -ItemType Directory -Force
 
-# Cleanup old summary reports (older than 7 days)
-$reportPattern = "cleanup_summary_*.json"
-Get-ChildItem -Path "." -Filter $reportPattern -File |
-    Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-7) } |
-    ForEach-Object {
-        try { Remove-Item $_.FullName -Force; Write-Host "Deleted old report: $($_.Name)" } catch { Write-Warning "Failed to delete report: $($_.FullName)" }
-    }
+if (-not (Test-Path $settingsFile)) {
+    Write-Error "Settings file $settingsFile not found."
+    exit 1
+}
 
-# Cleanup old temp job folders (> 7 days)
-$tempRoot = "$env:TEMP"
-Get-ChildItem -Path $tempRoot -Directory -Filter "cleanup_jobs_*" |
-    Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-7) } |
-    ForEach-Object {
-        try { Remove-Item -Path $_.FullName -Recurse -Force; Write-Host "Deleted old temp dir: $($_.FullName)" } catch { Write-Warning "Failed to delete temp dir: $($_.FullName)" }
-    }
-
-if (-not (Test-Path $settingsFile)) { Write-Error "Settings file $settingsFile not found."; exit 1 }
-
-try { $settings = Get-Content -Raw -Path $settingsFile | ConvertFrom-Json }
-catch { Write-Error "Failed to parse JSON from $settingsFile"; exit 1 }
+try {
+    $settings = Get-Content -Raw -Path $settingsFile | ConvertFrom-Json
+} catch {
+    Write-Error "Failed to parse JSON from $settingsFile"
+    exit 1
+}
 
 $scriptStartTime = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
 $allJobs = @()
@@ -50,51 +39,84 @@ foreach ($item in $settings) {
     $index++
 }
 
+# Job script
 $jobScript = {
-    param ($path, $keepDays, $dryRun, $reportPath, $logPath)
+    function Rename-OldItems {
+        param ($path, $cutoff, $markDate, $dryRun, $logPath, $entry)
 
-    function Rename-OldItems { param ($path, $cutoff, $markDate, $dryRun, $logPath, $entry)
         $markPrefix = "DELETE_BY_" + $markDate.ToString("yyyyMMdd") + "__"
 
+        # Files
         $files = Get-ChildItem -Path $path -File -Force -ErrorAction SilentlyContinue
-        $oldFiles = $files.Where({ $_.LastWriteTime -lt $cutoff }, 'Default')
+        $oldFiles = $files.Where({ $_.LastWriteTime -lt $cutoff -and ($_ -notmatch '^DELETE_BY_\d{8}__') }, 'Default')
         foreach ($file in $oldFiles) {
-            if ($file.Name -notmatch '^DELETE_BY_\d{8}__') {
-                $newName = Join-Path $file.DirectoryName ($markPrefix + $file.Name)
-                if ($dryRun) { $entry.renamedFileCount++; Add-Content $logPath "Would rename file: $($file.FullName) -> $newName" }
-                else { try { Rename-Item -Path $file.FullName -NewName $newName -Force; $entry.renamedFileCount++; Add-Content $logPath "Renamed file: $($file.Name) -> $newName" } catch { Add-Content $logPath "Failed to rename file: $($file.FullName) — $_" } }
+            $newName = Join-Path $file.DirectoryName ($markPrefix + $file.Name)
+            if ($dryRun) {
+                $entry.renamedFileCount++
+                Add-Content $logPath "Would rename file: $($file.FullName) -> $newName"
+            } else {
+                try {
+                    Rename-Item -Path $file.FullName -NewName $newName -Force
+                    $entry.renamedFileCount++
+                    Add-Content $logPath "Renamed file: $($file.Name) -> $newName"
+                } catch {
+                    Add-Content $logPath "Failed to rename file: $($file.FullName)"
+                }
             }
         }
 
+        # Folders
         $dirs = Get-ChildItem -Path $path -Directory -Force -ErrorAction SilentlyContinue
-        $oldDirs = $dirs.Where({ $_.LastWriteTime -lt $cutoff }, 'Default')
+        $oldDirs = $dirs.Where({ $_.LastWriteTime -lt $cutoff -and ($_ -notmatch '^DELETE_BY_\d{8}__') }, 'Default')
         foreach ($dir in $oldDirs) {
-            if ($dir.Name -notmatch '^DELETE_BY_\d{8}__') {
-                $newName = Join-Path $dir.Parent.FullName ($markPrefix + $dir.Name)
-                if ($dryRun) { $entry.renamedFolderCount++; Add-Content $logPath "Would rename folder: $($dir.FullName) -> $newName" }
-                else { try { Rename-Item -Path $dir.FullName -NewName $newName -Force; $entry.renamedFolderCount++; Add-Content $logPath "Renamed folder: $($dir.Name) -> $newName" } catch { Add-Content $logPath "Failed to rename folder: $($dir.FullName) — $_" } }
+            $newName = Join-Path $dir.Parent.FullName ($markPrefix + $dir.Name)
+            if ($dryRun) {
+                $entry.renamedFolderCount++
+                Add-Content $logPath "Would rename folder: $($dir.FullName) -> $newName"
+            } else {
+                try {
+                    Rename-Item -Path $dir.FullName -NewName $newName -Force
+                    $entry.renamedFolderCount++
+                    Add-Content $logPath "Renamed folder: $($dir.Name) -> $newName"
+                } catch {
+                    Add-Content $logPath "Failed to rename folder: $($dir.FullName)"
+                }
             }
         }
     }
 
-    function Cleanup-MarkedItems { param ($path, $now, $dryRun, $logPath, $entry)
-        $allItems = Get-ChildItem -Path $path -Force
+    function Cleanup-MarkedItems {
+        param ($path, $now, $dryRun, $logPath, $entry)
+
+        $allItems = Get-ChildItem -Path $path -Force -ErrorAction SilentlyContinue
         foreach ($item in $allItems) {
             if ($item.Name -match '^DELETE_BY_(\d{8})__') {
                 $deleteBy = [datetime]::ParseExact($matches[1], 'yyyyMMdd', $null)
                 if ($deleteBy -lt $now) {
-                    if ($dryRun) { Add-Content $logPath "Would delete: $($item.FullName)"; if ($item.PSIsContainer) { $entry.deletedFolderCount++ } else { $entry.deletedFileCount++ } }
-                    else {
+                    if ($dryRun) {
+                        Add-Content $logPath "Would delete: $($item.FullName)"
+                        if ($item.PSIsContainer) { $entry.deletedFolderCount++ } else { $entry.deletedFileCount++ }
+                    } else {
                         try {
-                            if ($item.PSIsContainer) { [System.IO.Directory]::Delete($item.FullName, $true); $entry.deletedFolderCount++ }
-                            else { [System.IO.File]::Delete($item.FullName); $entry.deletedFileCount++ }
+                            if ($item.PSIsContainer) {
+                                [System.IO.Directory]::Delete($item.FullName, $true)
+                                $entry.deletedFolderCount++
+                            } else {
+                                [System.IO.File]::Delete($item.FullName)
+                                $entry.deletedFileCount++
+                            }
                             Add-Content $logPath "Deleted: $($item.FullName)"
-                        } catch { $entry.skippedDeletions++; Add-Content $logPath "Failed to delete: $($item.FullName) — $_" }
+                        } catch {
+                            $entry.skippedDeletions++
+                            Add-Content $logPath "Failed to delete: $($item.FullName)"
+                        }
                     }
                 }
             }
         }
     }
+
+    param ($path, $keepDays, $dryRun, $reportPath, $logPath)
 
     $now = Get-Date
     $cutoff = $now.AddDays(-$keepDays)
@@ -115,23 +137,20 @@ $jobScript = {
 
     Add-Content $logPath "[$(Get-Date -Format HH:mm:ss)] Start: $path"
 
-    if (-not (Test-Path $path)) { $entry.note = "Path does not exist"; Add-Content $logPath "Path does not exist" }
-    else {
-        Rename-OldItems   -path $path -cutoff $cutoff -markDate $markDate -dryRun $dryRun -logPath $logPath -entry $entry
-        Cleanup-MarkedItems -path $path -now $now    -dryRun $dryRun -logPath $logPath -entry $entry
+    if (-not (Test-Path $path)) {
+        $entry.note = "Path does not exist"
+        Add-Content $logPath "Path does not exist"
+    } else {
+        Rename-OldItems -path $path -cutoff $cutoff -markDate $markDate -dryRun $dryRun -logPath $logPath -entry $entry
+        Cleanup-MarkedItems -path $path -now $now -dryRun $dryRun -logPath $logPath -entry $entry
     }
 
     Add-Content $logPath "[$(Get-Date -Format HH:mm:ss)] Done: $path"
     $entry | ConvertTo-Json -Depth 4 | Set-Content -Path $reportPath -Encoding UTF8
 }
 
-# ---------- Robust throttling with -Any, timeouts, and hung-kill ----------
-function Remove-JobFromList([System.Collections.ArrayList]$list, [int]$id) {
-    $idx = $list.FindIndex({ param($j) $j -and $j.Id -eq $id })
-    if ($idx -ge 0) { $list.RemoveAt($idx) | Out-Null }
-}
-
-$runningJobs = [System.Collections.ArrayList]::new()
+# Throttled job execution
+$runningJobs = @()
 $jobIndex = 0
 
 foreach ($jobData in $allJobs) {
@@ -141,12 +160,12 @@ foreach ($jobData in $allJobs) {
     $jobIndex++
 
     if ($runningJobs.Count -ge $MaxConcurrent) {
-        Write-Host "[Throttle] $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) Max $MaxConcurrent jobs reached. Waiting for one to complete..."
+        Write-Host "[Throttle] $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) Max $MaxConcurrent jobs reached. Waiting..."
         $done = Wait-Job -Job $runningJobs -Any -Timeout $WaitTimeoutSec
         if ($null -eq $done) {
             $hung = $runningJobs | Where-Object { (Get-Date) - $_.PSBeginTime -gt (New-TimeSpan -Seconds $KillHungAfterSec) }
             foreach ($h in $hung) {
-                Write-Warning "Killing hung job Id=$($h.Id) Name=$($h.Name)"
+                Write-Warning "Killing hung job Id=$($h.Id)"
                 Stop-Job -Job $h -Force -ErrorAction SilentlyContinue
                 Receive-Job -Job $h -ErrorAction SilentlyContinue | Out-Null
                 Remove-Job -Job $h -ErrorAction SilentlyContinue
@@ -160,14 +179,13 @@ foreach ($jobData in $allJobs) {
     }
 }
 
-# Final drain
 while ($runningJobs.Count -gt 0) {
     Write-Host "[Throttle] $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) Draining final batch... ($($runningJobs.Count) running)"
     $done = Wait-Job -Job $runningJobs -Any -Timeout $WaitTimeoutSec
     if ($null -eq $done) {
         $hung = $runningJobs | Where-Object { (Get-Date) - $_.PSBeginTime -gt (New-TimeSpan -Seconds $KillHungAfterSec) }
         foreach ($h in $hung) {
-            Write-Warning "Killing hung job Id=$($h.Id) Name=$($h.Name)"
+            Write-Warning "Killing hung job Id=$($h.Id)"
             Stop-Job -Job $h -Force -ErrorAction SilentlyContinue
             Receive-Job -Job $h -ErrorAction SilentlyContinue | Out-Null
             Remove-Job -Job $h -ErrorAction SilentlyContinue
@@ -181,14 +199,24 @@ while ($runningJobs.Count -gt 0) {
 }
 
 # Merge results
-$summary = [ordered]@{ startedAt = $scriptStartTime; endedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss"); dryRun = $DryRun.IsPresent; entries = @() }
-for ($i = 0; $i -lt $allJobs.Count; $i++) {
-    $jobFile = "$tempDir\job_$i.json"; if (Test-Path $jobFile) { $data = Get-Content -Raw -Path $jobFile | ConvertFrom-Json; $summary.entries += $data }
+$summary = [ordered]@{
+    startedAt = $scriptStartTime
+    endedAt   = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    dryRun    = $DryRun.IsPresent
+    tag       = $Tag
+    entries   = @()
 }
 
-$finalReport = "cleanup_summary_${timestamp}_$Tag.json"
+for ($i = 0; $i -lt $allJobs.Count; $i++) {
+    $jobFile = "$tempDir\job_$i.json"
+    if (Test-Path $jobFile) {
+        $data = Get-Content -Raw -Path $jobFile | ConvertFrom-Json
+        $summary.entries += $data
+    }
+}
+
+$finalReport = "cleanup_summary_${timestamp}_${Tag}.json"
 $summary | ConvertTo-Json -Depth 4 | Set-Content -Path $finalReport -Encoding UTF8
 
-Write-Output "[END] Cleanup finished at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-Write-Output "Summary: $finalReport"
-Write-Output "Logs directory: $logDir"
+Write-Host "`nCleanup complete. Summary saved to: $finalReport"
+Write-Host "Logs saved to: $logDir"
