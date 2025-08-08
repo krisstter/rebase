@@ -135,52 +135,48 @@ $runningJobs = [System.Collections.ArrayList]::new()
 $jobIndex = 0
 
 foreach ($jobData in $allJobs) {
-    if (-not $jobData.path) { Write-Warning "Job $jobIndex has null or empty path. Skipping..."; $jobIndex++; continue }
-
-    Write-Host "[Start] Job $jobIndex - $($jobData.path)"
+    Write-Host "[Start] $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) Job $jobIndex - $($jobData.path)"
     $job = Start-Job -ScriptBlock $jobScript -ArgumentList $jobData.path, $jobData.daystokeep, $DryRun.IsPresent, $jobData.reportPath, $jobData.logPath
-
-    if ($job) { [void]$runningJobs.Add($job) } else { Write-Warning "Failed to start job $jobIndex - $($jobData.path)" }
+    $runningJobs += $job
     $jobIndex++
 
     if ($runningJobs.Count -ge $MaxConcurrent) {
-        Write-Host "[Throttle] Max $MaxConcurrent jobs reached. Waiting for one to complete..."
+        Write-Host "[Throttle] $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) Max $MaxConcurrent jobs reached. Waiting for one to complete..."
         $done = Wait-Job -Job $runningJobs -Any -Timeout $WaitTimeoutSec
         if ($null -eq $done) {
-            $hung = $runningJobs | Where-Object { $_ -and $_.PSBeginTime -and ((Get-Date) - $_.PSBeginTime).TotalSeconds -gt $KillHungAfterSec }
+            $hung = $runningJobs | Where-Object { (Get-Date) - $_.PSBeginTime -gt (New-TimeSpan -Seconds $KillHungAfterSec) }
             foreach ($h in $hung) {
                 Write-Warning "Killing hung job Id=$($h.Id) Name=$($h.Name)"
                 Stop-Job -Job $h -Force -ErrorAction SilentlyContinue
                 Receive-Job -Job $h -ErrorAction SilentlyContinue | Out-Null
                 Remove-Job -Job $h -ErrorAction SilentlyContinue
-                Remove-JobFromList $runningJobs $h.Id
+                $runningJobs = $runningJobs | Where-Object { $_.Id -ne $h.Id }
             }
-            if ($hung.Count -eq 0) { Write-Warning "No jobs finished within $WaitTimeoutSec s; still waiting..." }
         } else {
             Receive-Job -Job $done -ErrorAction SilentlyContinue | Out-Null
             Remove-Job -Job $done -ErrorAction SilentlyContinue
-            Remove-JobFromList $runningJobs $done.Id
+            $runningJobs = $runningJobs | Where-Object { $_.Id -ne $done.Id }
         }
     }
 }
 
+# Final drain
 while ($runningJobs.Count -gt 0) {
-    Write-Host "[Throttle] Draining final batch... ($($runningJobs.Count) running)"
+    Write-Host "[Throttle] $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) Draining final batch... ($($runningJobs.Count) running)"
     $done = Wait-Job -Job $runningJobs -Any -Timeout $WaitTimeoutSec
     if ($null -eq $done) {
-        $hung = $runningJobs | Where-Object { $_ -and $_.PSBeginTime -and ((Get-Date) - $_.PSBeginTime).TotalSeconds -gt $KillHungAfterSec }
+        $hung = $runningJobs | Where-Object { (Get-Date) - $_.PSBeginTime -gt (New-TimeSpan -Seconds $KillHungAfterSec) }
         foreach ($h in $hung) {
             Write-Warning "Killing hung job Id=$($h.Id) Name=$($h.Name)"
             Stop-Job -Job $h -Force -ErrorAction SilentlyContinue
             Receive-Job -Job $h -ErrorAction SilentlyContinue | Out-Null
             Remove-Job -Job $h -ErrorAction SilentlyContinue
-            Remove-JobFromList $runningJobs $h.Id
+            $runningJobs = $runningJobs | Where-Object { $_.Id -ne $h.Id }
         }
-        if ($hung.Count -eq 0) { Write-Warning "No jobs finished within $WaitTimeoutSec s; still waiting..." }
     } else {
         Receive-Job -Job $done -ErrorAction SilentlyContinue | Out-Null
         Remove-Job -Job $done -ErrorAction SilentlyContinue
-        Remove-JobFromList $runningJobs $done.Id
+        $runningJobs = $runningJobs | Where-Object { $_.Id -ne $done.Id }
     }
 }
 
