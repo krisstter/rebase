@@ -41,6 +41,8 @@ foreach ($item in $settings) {
 
 # Job script
 $jobScript = {
+    param ($path, $keepDays, $dryRun, $reportPath, $logPath)
+
     function Rename-OldItems {
         param ($path, $cutoff, $markDate, $dryRun, $logPath, $entry)
 
@@ -48,7 +50,7 @@ $jobScript = {
 
         # Files
         $files = Get-ChildItem -Path $path -File -Force -ErrorAction SilentlyContinue
-        $oldFiles = $files.Where({ $_.LastWriteTime -lt $cutoff -and ($_ -notmatch '^DELETE_BY_\d{8}__') }, 'Default')
+        $oldFiles = $files.Where({ $_.LastWriteTime -lt $cutoff -and ($_ -notmatch '^DELETE_BY_\\d{8}__') }, 'Default')
         foreach ($file in $oldFiles) {
             $newName = Join-Path $file.DirectoryName ($markPrefix + $file.Name)
             if ($dryRun) {
@@ -67,7 +69,7 @@ $jobScript = {
 
         # Folders
         $dirs = Get-ChildItem -Path $path -Directory -Force -ErrorAction SilentlyContinue
-        $oldDirs = $dirs.Where({ $_.LastWriteTime -lt $cutoff -and ($_ -notmatch '^DELETE_BY_\d{8}__') }, 'Default')
+        $oldDirs = $dirs.Where({ $_.LastWriteTime -lt $cutoff -and ($_ -notmatch '^DELETE_BY_\\d{8}__') }, 'Default')
         foreach ($dir in $oldDirs) {
             $newName = Join-Path $dir.Parent.FullName ($markPrefix + $dir.Name)
             if ($dryRun) {
@@ -90,7 +92,7 @@ $jobScript = {
 
         $allItems = Get-ChildItem -Path $path -Force -ErrorAction SilentlyContinue
         foreach ($item in $allItems) {
-            if ($item.Name -match '^DELETE_BY_(\d{8})__') {
+            if ($item.Name -match '^DELETE_BY_(\\d{8})__') {
                 $deleteBy = [datetime]::ParseExact($matches[1], 'yyyyMMdd', $null)
                 if ($deleteBy -lt $now) {
                     if ($dryRun) {
@@ -115,8 +117,6 @@ $jobScript = {
             }
         }
     }
-
-    param ($path, $keepDays, $dryRun, $reportPath, $logPath)
 
     $now = Get-Date
     $cutoff = $now.AddDays(-$keepDays)
