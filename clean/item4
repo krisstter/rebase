@@ -1,11 +1,13 @@
 param(
     [string]$settingsFile,
     [switch]$DryRun,
-    [string]$Tag = "default",
+    [string]$Tag = "Default",
     [int]$MaxConcurrent = 40,
     [int]$WaitTimeoutSec = 600,
     [int]$KillHungAfterSec = 3600
 )
+
+Write-Host "[Start] Cleanup Started $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))"
 
 $timestamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
 $tempDir = "$env:TEMP\cleanup_jobs_${timestamp}_$Tag"
@@ -39,7 +41,7 @@ foreach ($item in $settings) {
     $index++
 }
 
-# Job script
+# --- ScriptBlock ---
 $jobScript = {
     param ($path, $keepDays, $dryRun, $reportPath, $logPath)
 
@@ -48,9 +50,8 @@ $jobScript = {
 
         $markPrefix = "DELETE_BY_" + $markDate.ToString("yyyyMMdd") + "__"
 
-        # Files
         $files = Get-ChildItem -Path $path -File -Force -ErrorAction SilentlyContinue
-        $oldFiles = $files.Where({ $_.LastWriteTime -lt $cutoff -and ($_ -notmatch '^DELETE_BY_\\d{8}__') }, 'Default')
+        $oldFiles = $files.Where({ $_.LastWriteTime -lt $cutoff -and $_.Name -notmatch '^DELETE_BY_\d{8}__' }, 'Default')
         foreach ($file in $oldFiles) {
             $newName = Join-Path $file.DirectoryName ($markPrefix + $file.Name)
             if ($dryRun) {
@@ -67,9 +68,8 @@ $jobScript = {
             }
         }
 
-        # Folders
         $dirs = Get-ChildItem -Path $path -Directory -Force -ErrorAction SilentlyContinue
-        $oldDirs = $dirs.Where({ $_.LastWriteTime -lt $cutoff -and ($_ -notmatch '^DELETE_BY_\\d{8}__') }, 'Default')
+        $oldDirs = $dirs.Where({ $_.LastWriteTime -lt $cutoff -and $_.Name -notmatch '^DELETE_BY_\d{8}__' }, 'Default')
         foreach ($dir in $oldDirs) {
             $newName = Join-Path $dir.Parent.FullName ($markPrefix + $dir.Name)
             if ($dryRun) {
@@ -92,7 +92,7 @@ $jobScript = {
 
         $allItems = Get-ChildItem -Path $path -Force -ErrorAction SilentlyContinue
         foreach ($item in $allItems) {
-            if ($item.Name -match '^DELETE_BY_(\\d{8})__') {
+            if ($item.Name -match '^DELETE_BY_(\d{8})__') {
                 $deleteBy = [datetime]::ParseExact($matches[1], 'yyyyMMdd', $null)
                 if ($deleteBy -lt $now) {
                     if ($dryRun) {
@@ -149,7 +149,7 @@ $jobScript = {
     $entry | ConvertTo-Json -Depth 4 | Set-Content -Path $reportPath -Encoding UTF8
 }
 
-# Throttled job execution
+# --- Throttled job execution ---
 $runningJobs = @()
 $jobIndex = 0
 
@@ -162,40 +162,32 @@ foreach ($jobData in $allJobs) {
     if ($runningJobs.Count -ge $MaxConcurrent) {
         Write-Host "[Throttle] $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) Max $MaxConcurrent jobs reached. Waiting..."
         $done = Wait-Job -Job $runningJobs -Any -Timeout $WaitTimeoutSec
-        if ($null -eq $done) {
-            $hung = $runningJobs | Where-Object { (Get-Date) - $_.PSBeginTime -gt (New-TimeSpan -Seconds $KillHungAfterSec) }
-            foreach ($h in $hung) {
-                Write-Warning "Killing hung job Id=$($h.Id)"
-                Stop-Job -Job $h -Force -ErrorAction SilentlyContinue
-                Receive-Job -Job $h -ErrorAction SilentlyContinue | Out-Null
-                Remove-Job -Job $h -ErrorAction SilentlyContinue
-                $runningJobs = $runningJobs | Where-Object { $_.Id -ne $h.Id }
-            }
-        } else {
+        if ($null -ne $done) {
+            $ids = @($done | Select-Object -ExpandProperty Id)
             Receive-Job -Job $done -ErrorAction SilentlyContinue | Out-Null
             Remove-Job -Job $done -ErrorAction SilentlyContinue
-            $runningJobs = $runningJobs | Where-Object { $_.Id -ne $done.Id }
+            $runningJobs = $runningJobs | Where-Object { $ids -notcontains $_.Id }
         }
     }
 }
 
+# Final drain
 while ($runningJobs.Count -gt 0) {
     Write-Host "[Throttle] $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) Draining final batch... ($($runningJobs.Count) running)"
     $done = Wait-Job -Job $runningJobs -Any -Timeout $WaitTimeoutSec
-    if ($null -eq $done) {
-        $hung = $runningJobs | Where-Object { (Get-Date) - $_.PSBeginTime -gt (New-TimeSpan -Seconds $KillHungAfterSec) }
-        foreach ($h in $hung) {
-            Write-Warning "Killing hung job Id=$($h.Id)"
-            Stop-Job -Job $h -Force -ErrorAction SilentlyContinue
-            Receive-Job -Job $h -ErrorAction SilentlyContinue | Out-Null
-            Remove-Job -Job $h -ErrorAction SilentlyContinue
-            $runningJobs = $runningJobs | Where-Object { $_.Id -ne $h.Id }
-        }
-    } else {
+    if ($null -ne $done) {
+        $ids = @($done | Select-Object -ExpandProperty Id)
         Receive-Job -Job $done -ErrorAction SilentlyContinue | Out-Null
         Remove-Job -Job $done -ErrorAction SilentlyContinue
-        $runningJobs = $runningJobs | Where-Object { $_.Id -ne $done.Id }
+        $runningJobs = $runningJobs | Where-Object { $ids -notcontains $_.Id }
     }
+}
+
+# Safety cleanup
+$left = Get-Job -ErrorAction SilentlyContinue
+if ($left) {
+    Receive-Job -Job $left -ErrorAction SilentlyContinue | Out-Null
+    Remove-Job -Job $left -Force -ErrorAction SilentlyContinue
 }
 
 # Merge results
@@ -203,7 +195,6 @@ $summary = [ordered]@{
     startedAt = $scriptStartTime
     endedAt   = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
     dryRun    = $DryRun.IsPresent
-    tag       = $Tag
     entries   = @()
 }
 
@@ -215,7 +206,7 @@ for ($i = 0; $i -lt $allJobs.Count; $i++) {
     }
 }
 
-$finalReport = "cleanup_summary_${timestamp}_${Tag}.json"
+$finalReport = "cleanup_summary_${timestamp}_$Tag.json"
 $summary | ConvertTo-Json -Depth 4 | Set-Content -Path $finalReport -Encoding UTF8
 
 Write-Host "`nCleanup complete. Summary saved to: $finalReport"
