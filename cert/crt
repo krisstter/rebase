@@ -1,0 +1,8 @@
+$certPath = (Resolve-Path -LiteralPath $certPath -ErrorAction Stop).ProviderPath
+
+# Option B (PS 5/compatible): remove the prefix if present
+$certPath = ((Resolve-Path -LiteralPath $certPath -ErrorAction Stop).Path) `
+            -replace '^Microsoft\.PowerShell\.Core\\FileSystem::',''
+
+# Option C: Get-Item.FullName (works on PS 5+)
+$certPath = (Get-Item -LiteralPath $certPath -ErrorAction Stop).FullName
