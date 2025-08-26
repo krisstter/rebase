@@ -1,0 +1,10 @@
+<PropertyGroup>
+  <!-- Let newer VS versions set this; otherwise default for fallback -->
+  <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">17.0</VisualStudioVersion>
+  <VSToolsPath Condition="'$(VSToolsPath)' == ''">
+    $(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)
+  </VSToolsPath>
+</PropertyGroup>
+
+<Import Project="$(VSToolsPath)\WebApplications\Microsoft.WebApplication.targets"
+        Condition="Exists('$(VSToolsPath)\WebApplications\Microsoft.WebApplication.targets')" />
