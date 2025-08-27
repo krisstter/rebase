@@ -1,6 +1,6 @@
 $iisConfig = New-Object psobject -Property @{
     ComponentName                  = $componentName
-    AppName                        = if ($IsBuiltInSite.IsPresent) { "Default Web Site" } else { $componentName }
+    AppName                        = if ($IsBuiltInSite -eq "true") { "Default Web Site" } else { $componentName }
     AppPoolName                    = "$componentName"
     VirtualAppName                 = $VirtualAppName
     AppPoolIdentityUser            = $user
@@ -13,7 +13,7 @@ $iisConfig = New-Object psobject -Property @{
     PipelineMode                   = $PipelineMode
     BindingPort                    = $port
     BindingProtocol                = "http"
-    IsBuiltInSite                  = $IsBuiltInSite.IsPresent
+    IsBuiltInSite                  = ($IsBuiltInSite -eq "true")
 }
 
 
