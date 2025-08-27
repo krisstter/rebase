@@ -1,0 +1,35 @@
+$iisConfig = New-Object psobject -Property @{
+    ComponentName                  = $componentName
+    AppName                        = if ($IsBuiltInSite.IsPresent) { "Default Web Site" } else { $componentName }
+    AppPoolName                    = "$componentName"
+    VirtualAppName                 = $VirtualAppName
+    AppPoolIdentityUser            = $user
+    AppPoolIdentityPassword        = $password
+    AppPoolDotNetVersion           = "v4.0"
+    AppPoolIdleTimeout             = $AppPoolIdleTimeout
+    AppPoolShutdownTimeLimit       = $AppPoolShutdownTimeLimit
+    AppPoolPeriodicRestartTime     = $AppPoolPeriodicRestartTime
+    AppPoolPeriodicRestartRequests = $AppPoolPeriodicRestartRequests
+    PipelineMode                   = $PipelineMode
+    BindingPort                    = $port
+    BindingProtocol                = "http"
+    IsBuiltInSite                  = $IsBuiltInSite.IsPresent
+}
+
+
+if (-not $iisConfig.IsBuiltInSite) {
+    Write-Host "Deleting site if exists: $($iisConfig.AppName)"
+    if ((Test-Path "IIS:\Sites\$($iisConfig.AppName)") -eq $true) {
+        Run-Appcmd -command "list site $($iisConfig.AppName) /config /xml > $(Join-Path -Path $installPath -ChildPath "SiteBackup.xml")"
+        Run-Appcmd -command "delete site $($iisConfig.AppName)"
+    }
+} else {
+    Write-Host "Skipping site deletion — built-in site: $($iisConfig.AppName)"
+}
+if (-not $iisConfig.IsBuiltInSite) {
+    Write-Host "Creating site: $($iisConfig.AppName)"
+    Run-Appcmd -command "add site /name:`"$($iisConfig.AppName)`" /physicalPath:`"$installPath`" /bindings:$($iisConfig.BindingProtocol)/*:$($iisConfig.BindingPort):"
+    Run-Appcmd -command "set app /app.name:`"$($iisConfig.AppName)`" /applicationPool:`"$($iisConfig.AppPoolName)`""
+} else {
+    Write-Host "Skipping site creation — built-in site: $($iisConfig.AppName)"
+}
