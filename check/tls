@@ -1,0 +1,263 @@
+<# 
+.SYNOPSIS
+  Check Windows TLS/SChannel-related registry settings.
+
+.DESCRIPTION
+  - Reads HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\<TLS>\(Client|Server)
+    values: Enabled, DisabledByDefault
+  - Reports effective state: Enabled / Disabled / NotConfigured / Conflicting
+  - Optionally summarizes .NET “SchUseStrongCrypto” and WinHTTP/IE SecureProtocols masks
+  - Optionally shows Cipher Suite policy key presence (no parsing by default)
+
+.PARAMETER AsJson
+  Emit JSON instead of a table.
+
+.PARAMETER IncludeDotNet
+  Include .NET Framework strong crypto flags.
+
+.PARAMETER IncludeWinHttp
+  Include WinHTTP/IE SecureProtocols masks.
+
+.PARAMETER IncludeCipherPolicyPresence
+  Include presence/summary of SChannel cipher suite policy key.
+
+.EXAMPLE
+  .\Check-TlsSettings.ps1
+
+.EXAMPLE
+  .\Check-TlsSettings.ps1 -AsJson | Out-File tls_audit.json -Encoding utf8
+
+.NOTES
+  Run in an elevated PowerShell for best results.
+#>
+
+[CmdletBinding()]
+param(
+  [switch]$AsJson,
+  [switch]$IncludeDotNet,
+  [switch]$IncludeWinHttp,
+  [switch]$IncludeCipherPolicyPresence
+)
+
+function Get-RegistryValue {
+  param(
+    [Parameter(Mandatory)] [string]$Path,
+    [Parameter(Mandatory)] [string]$Name
+  )
+  try {
+    $item = Get-ItemProperty -Path $Path -ErrorAction Stop
+    if ($null -ne $item.$Name) { 
+      [int]$item.$Name 
+    } else { 
+      $null 
+    }
+  } catch {
+    $null
+  }
+}
+
+function Test-TlsProtocolSettings {
+  [CmdletBinding()]
+  param()
+  $base = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols'
+
+  $protocols = @('TLS 1.0','TLS 1.1','TLS 1.2','TLS 1.3')
+  $roles = @('Client','Server')
+
+  $results = foreach ($proto in $protocols) {
+    foreach ($role in $roles) {
+      $path = Join-Path -Path (Join-Path -Path (Join-Path -Path $base -ChildPath $proto) -ChildPath $role) -ChildPath ''
+      $enabled = Get-RegistryValue -Path $path -Name 'Enabled'
+      $disabledByDefault = Get-RegistryValue -Path $path -Name 'DisabledByDefault'
+
+      # Determine effective state
+      $state = 'NotConfigured'
+      $notes = @()
+
+      if ($null -ne $enabled -or $null -ne $disabledByDefault) {
+        # Any value present means it's explicitly configured
+        switch -Regex ($true) {
+          { $enabled -eq 1 -and ($disabledByDefault -eq $null -or $disabledByDefault -eq 0) } {
+            $state = 'Enabled'
+            break
+          }
+          { $enabled -eq 0 -or $disabledByDefault -eq 1 } {
+            $state = 'Disabled'
+            break
+          }
+          { $enabled -eq 1 -and $disabledByDefault -eq 1 } {
+            $state = 'Conflicting'
+            $notes += 'Enabled=1 but DisabledByDefault=1'
+            break
+          }
+          default {
+            $state = 'Configured-Unknown'
+            $notes += "Enabled=$enabled, DisabledByDefault=$disabledByDefault"
+          }
+        }
+      }
+
+      [pscustomobject]@{
+        ScopePath          = $path.TrimEnd('\')
+        Protocol           = $proto
+        Role               = $role
+        Enabled            = $enabled
+        DisabledByDefault  = $disabledByDefault
+        EffectiveState     = $state
+        Notes              = ($notes -join '; ')
+      }
+    }
+  }
+
+  $results
+}
+
+function Get-DotNetTlsSettings {
+  [CmdletBinding()]
+  param()
+  $paths = @(
+    'HKLM:\SOFTWARE\Microsoft\.NETFramework\v4.0.30319',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\.NETFramework\v4.0.30319'
+  )
+  foreach ($p in $paths) {
+    $strong = Get-RegistryValue -Path $p -Name 'SchUseStrongCrypto'
+    [pscustomobject]@{
+      ScopePath = $p
+      Key       = 'SchUseStrongCrypto'
+      Value     = $strong
+      Meaning   = switch ($strong) {
+        1 { '.NET will prefer strong crypto (TLS 1.2+)' }
+        0 { '.NET strong crypto disabled (legacy behavior)' }
+        $null { 'Not configured' }
+        default { "Custom value: $strong" }
+      }
+    }
+  }
+}
+
+function Decode-SecureProtocolsMask {
+  param([int]$Mask)
+  # Bits used historically by WinInet/WinHTTP (legacy IE flags):
+  # 0x0080 SSL 2.0
+  # 0x0200 SSL 3.0
+  # 0x0800 TLS 1.0
+  # 0x2000 TLS 1.1
+  # 0x8000 TLS 1.2
+  # 0x00002000 and 0x00008000 are typical; TLS 1.3 not represented here.
+  $map = [ordered]@{
+    'SSL2'  = 0x0080
+    'SSL3'  = 0x0200
+    'TLS1.0'= 0x0800
+    'TLS1.1'= 0x2000
+    'TLS1.2'= 0x8000
+  }
+  $enabled = @()
+  foreach ($k in $map.Keys) {
+    if (($Mask -band $map[$k]) -ne 0) { $enabled += $k }
+  }
+  if ($enabled.Count -eq 0) { 'None' } else { $enabled -join ', ' }
+}
+
+function Get-WinHttpTlsSettings {
+  [CmdletBinding()]
+  param()
+  $items = @()
+
+  $winhttp = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp'
+  $mask = Get-RegistryValue -Path $winhttp -Name 'DefaultSecureProtocols'
+  $items += [pscustomobject]@{
+    ScopePath = "$winhttp\DefaultSecureProtocols"
+    Mask      = $mask
+    Decoded   = if ($null -ne $mask) { (Decode-SecureProtocolsMask -Mask $mask) } else { 'Not configured' }
+    Notes     = 'WinHTTP default secure protocols (legacy APIs)'
+  }
+
+  $ieCU = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+  $maskCU = Get-RegistryValue -Path $ieCU -Name 'SecureProtocols'
+  $items += [pscustomobject]@{
+    ScopePath = "$ieCU\SecureProtocols"
+    Mask      = $maskCU
+    Decoded   = if ($null -ne $maskCU) { (Decode-SecureProtocolsMask -Mask $maskCU) } else { 'Not configured'
+    }
+    Notes     = 'Per-user IE/WinInet legacy setting (may be ignored by modern apps)'
+  }
+
+  $items
+}
+
+function Get-CipherSuitePolicyPresence {
+  [CmdletBinding()]
+  param()
+  $policyKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002'
+  $funcs = Get-RegistryValue -Path $policyKey -Name 'Functions'
+  [pscustomobject]@{
+    ScopePath = $policyKey
+    HasPolicy = if ($null -ne $funcs) { $true } else { $false }
+    Note      = if ($null -ne $funcs) { 'Cipher suite order is defined by policy (not parsed here).' } else { 'No policy-defined cipher suite order found.' }
+  }
+}
+
+# ---------------- MAIN ----------------
+$report = [ordered]@{}
+$report.Protocols = Test-TlsProtocolSettings
+
+if ($IncludeDotNet) {
+  $report.DotNet = Get-DotNetTlsSettings
+}
+if ($IncludeWinHttp) {
+  $report.WinHttp = Get-WinHttpTlsSettings
+}
+if ($IncludeCipherPolicyPresence) {
+  $report.CipherPolicy = Get-CipherSuitePolicyPresence
+}
+
+# Quick recommendations (heuristic, non-OS-specific)
+$recommendations = New-Object System.Collections.Generic.List[object]
+foreach ($g in $report.Protocols | Group-Object Protocol) {
+  switch ($g.Name) {
+    'TLS 1.0' { $recommendations.Add("Consider disabling $($g.Name) Client/Server unless a legacy dependency requires it.") }
+    'TLS 1.1' { $recommendations.Add("Consider disabling $($g.Name) Client/Server unless a legacy dependency requires it.") }
+    'TLS 1.2' { 
+      if (($g.Group | Where-Object EffectiveState -in @('NotConfigured','Disabled','Conflicting')).Count -gt 0) {
+        $recommendations.Add('Ensure TLS 1.2 is enabled for both Client and Server roles (Enabled=1, DisabledByDefault=0).')
+      }
+    }
+    'TLS 1.3' {
+      # Some Windows builds manage TLS 1.3 differently; not all support explicit keys.
+      if (($g.Group | Where-Object EffectiveState -eq 'Disabled').Count -gt 0) {
+        $recommendations.Add('If the OS supports TLS 1.3, avoid explicitly disabling it unless required.')
+      }
+    }
+  }
+}
+$report.Recommendations = ($recommendations | Select-Object -Unique)
+
+if ($AsJson) {
+  $report | ConvertTo-Json -Depth 6
+} else {
+  Write-Host "`n=== TLS/SChannel Protocols ===`n" -ForegroundColor Cyan
+  $report.Protocols |
+    Select-Object Protocol, Role, Enabled, DisabledByDefault, EffectiveState, ScopePath, Notes |
+    Sort-Object Protocol, Role |
+    Format-Table -AutoSize
+
+  if ($IncludeDotNet) {
+    Write-Host "`n=== .NET Strong Crypto Flags ===`n" -ForegroundColor Cyan
+    $report.DotNet | Format-Table ScopePath, Key, Value, Meaning -AutoSize
+  }
+
+  if ($IncludeWinHttp) {
+    Write-Host "`n=== WinHTTP / IE SecureProtocols ===`n" -ForegroundColor Cyan
+    $report.WinHttp | Format-Table ScopePath, Mask, Decoded, Notes -AutoSize
+  }
+
+  if ($IncludeCipherPolicyPresence) {
+    Write-Host "`n=== Cipher Suite Policy (presence only) ===`n" -ForegroundColor Cyan
+    $report.CipherPolicy | Format-Table ScopePath, HasPolicy, Note -AutoSize
+  }
+
+  if ($report.Recommendations.Count -gt 0) {
+    Write-Host "`n=== Recommendations (heuristic) ===" -ForegroundColor Yellow
+    $report.Recommendations | ForEach-Object { " - $_" }
+  }
+}
