@@ -1,0 +1,180 @@
+[CmdletBinding(SupportsShouldProcess=$true)]
+param(
+  [Parameter(Mandatory)]
+  [ValidateScript({ Test-Path $_ })]
+  [string] $ConfigPath,
+
+  [Parameter(Mandatory)]
+  [ValidateSet('Failover','Failback')]
+  [string] $Mode,
+
+  [switch] $WhatIf
+)
+
+begin {
+  # Load config
+  try {
+    $cfg = (Get-Content -Path $ConfigPath -Raw -ErrorAction Stop) | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    throw "Failed to read/parse config '$ConfigPath': $($_.Exception.Message)"
+  }
+
+  if (-not $cfg.Targets -or $cfg.Targets.Count -eq 0) { throw "Config must contain a non-empty 'Targets' array." }
+  if (-not $cfg.$Mode -or -not $cfg.$Mode.Host)       { throw "Config missing '$Mode.Host'." }
+  if (-not $cfg.TnsEntryNames -or $cfg.TnsEntryNames.Count -eq 0) {
+    throw "Config must include 'TnsEntryNames' with at least one entry (e.g., 'PCBTCA3B.world')."
+  }
+
+  $newHost   = [string]$cfg.$Mode.Host
+  $onlyNames = [string[]]$cfg.TnsEntryNames
+
+  # Normalize targets (allow BasePath or BasePaths)
+  $targets = foreach ($t in $cfg.Targets) {
+    $computer  = $t.Computer
+    if (-not $computer) { $computer = $t.Name }
+    if (-not $computer) { throw "Each target needs 'Computer' (or 'Name')." }
+
+    $paths = @()
+    if ($t.PSObject.Properties.Name -contains 'BasePaths' -and $t.BasePaths) { $paths += @($t.BasePaths) }
+    if ($t.PSObject.Properties.Name -contains 'BasePath'  -and $t.BasePath)  { $paths += $t.BasePath }
+    if ($paths.Count -eq 0) { throw "Target '$computer' must define BasePath(s)." }
+
+    # Expand env vars if present
+    $paths = $paths | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_) }
+    [pscustomobject]@{ Computer=$computer; BasePaths=[string[]]$paths }
+  }
+
+  # Remote code (runs on each computer)
+  $remoteBlock = {
+    param(
+      [string[]] $BasePaths,
+      [string]   $NewHost,
+      [string[]] $EntryNames,
+      [bool]     $DoWhatIf
+    )
+
+    function New-BackupFile {
+      param([string]$Path)
+      $ts = Get-Date -Format 'yyyyMMdd-HHmmss'
+      $backup = "{0}.{1}.bak" -f $Path, $ts
+      Copy-Item -LiteralPath $Path -Destination $backup -Force
+      return $backup
+    }
+
+    # Preserve original encoding (incl. BOM)
+    function Get-ContentWithEncoding {
+      param([string]$Path)
+      $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+      try {
+        $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8, $true)
+        $text = $sr.ReadToEnd()
+        $enc  = $sr.CurrentEncoding
+      } finally { $sr.Close(); $fs.Close() }
+      [pscustomobject]@{ Text=$text; Encoding=$enc }
+    }
+    function Set-ContentPreserveEncoding {
+      param([string]$Path, [string]$Text, [System.Text.Encoding]$Encoding)
+      $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+      try { $sw = New-Object System.IO.StreamWriter($fs, $Encoding); $sw.Write($Text) } finally { $sw.Close(); $fs.Close() }
+    }
+
+    # Regex to change HOST= (case-insensitive, tolerant spacing)
+    $rxHost = [regex]'(?im)(\bHOST\s*=\s*)([^)\s]+)'
+
+    function Replace-HostInEntryBlocks {
+      param([string]$Content, [string[]]$EntryNames, [regex]$RxHost, [string]$NewHost)
+
+      $updated = $Content
+      foreach ($name in $EntryNames) {
+        $escapedName = [regex]::Escape($name)
+        # Match: ^<name> = ( ... balanced parens ... )
+        $pattern = "(?ims)^\s*$escapedName\s*=\s*\((?>[^()]+|\((?<o>)|\)(?<-o>))*(?(o)(?!))\)"
+        $rxBlock = [regex]::new($pattern)
+        $updated = $rxBlock.Replace($updated, {
+          param($m)
+          $block = $m.Value
+          $RxHost.Replace($block, "`$1$NewHost")
+        })
+      }
+      return $updated
+    }
+
+    $allResults = @()
+
+    foreach ($base in $BasePaths) {
+      if (-not (Test-Path -LiteralPath $base)) {
+        $allResults += [pscustomobject]@{ BasePath=$base; File=$null; Changed=$false; Backup=$null; Note="BasePath not found" }
+        continue
+      }
+
+      $files = Get-ChildItem -LiteralPath $base -Recurse -Filter 'tnsnames.ora' -File -ErrorAction SilentlyContinue
+      if (-not $files) {
+        $allResults += [pscustomobject]@{ BasePath=$base; File=$null; Changed=$false; Backup=$null; Note="No tnsnames.ora files" }
+        continue
+      }
+
+      foreach ($f in $files) {
+        $data = Get-ContentWithEncoding -Path $f.FullName
+        $text = $data.Text
+        $orig = $text
+
+        # Only touch the specified entries from JSON
+        $text = Replace-HostInEntryBlocks -Content $text -EntryNames $EntryNames -RxHost $rxHost -NewHost $NewHost
+
+        $changed = -not [string]::Equals($orig, $text, [System.StringComparison]::Ordinal)
+
+        $backup = $null
+        if ($changed -and -not $DoWhatIf) {
+          $backup = New-BackupFile -Path $f.FullName
+          Set-ContentPreserveEncoding -Path $f.FullName -Text $text -Encoding $data.Encoding
+        }
+
+        $allResults += [pscustomobject]@{
+          BasePath=$base; File=$f.FullName; Changed=$changed; Backup=$backup; Note=$null
+        }
+      }
+    }
+
+    return $allResults
+  }
+}
+
+process {
+  foreach ($t in $targets) {
+    $cn = $t.Computer
+    Write-Host ">>> $cn" -ForegroundColor Cyan
+    try {
+      $s = New-PSSession -ComputerName $cn -ErrorAction Stop
+      try {
+        if ($PSCmdlet.ShouldProcess($cn, "Set HOST to '$newHost' inside entries: $($onlyNames -join ', ')")) {
+          $res = Invoke-Command -Session $s -ScriptBlock $remoteBlock -ArgumentList @(
+            $t.BasePaths, $newHost, $onlyNames, [bool]$WhatIf
+          )
+
+          $groups = $res | Group-Object BasePath
+          foreach ($g in $groups) {
+            $changed = ($g.Group | Where-Object Changed).Count
+            $scanned = ($g.Group | Where-Object File).Count
+            Write-Host ("  BasePath: {0} | files: {1}, changed: {2}" -f $g.Name, $scanned, $changed)
+            foreach ($r in $g.Group) {
+              if ($r.File) {
+                if ($r.Changed) {
+                  Write-Host "    UPDATED: $($r.File)"
+                  if ($r.Backup) { Write-Host "      Backup: $($r.Backup)" }
+                } else {
+                  Write-Host "    No change: $($r.File)"
+                }
+              } elseif ($r.Note) {
+                Write-Host "    Note: $($r.Note)"
+              }
+            }
+          }
+        }
+      } finally {
+        Remove-PSSession -Session $s
+      }
+    } catch {
+      Write-Warning "  $cn : $($_.Exception.Message)"
+    }
+  }
+}
