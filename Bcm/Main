@@ -1,4 +1,4 @@
-[CmdletBinding(SupportsShouldProcess=$true)]
+[CmdletBinding(SupportsShouldProcess = $true)]
 param(
   [Parameter(Mandatory)]
   [ValidateScript({ Test-Path $_ })]
@@ -6,155 +6,163 @@ param(
 
   [Parameter(Mandatory)]
   [ValidateSet('Failover','Failback')]
-  [string] $Mode,
-
-  [switch] $WhatIf
+  [string] $Mode
 )
 
-begin {
-  # Load minimal config
-  try {
-    $cfg = (Get-Content -Path $ConfigPath -Raw -ErrorAction Stop) | ConvertFrom-Json -ErrorAction Stop
-  } catch {
-    throw "Failed to read/parse config '$ConfigPath': $($_.Exception.Message)"
-  }
-
-  if (-not $cfg.Targets -or $cfg.Targets.Count -eq 0) { throw "Config must contain a non-empty 'Targets' array." }
-  if (-not $cfg.$Mode -or -not $cfg.$Mode.Host)       { throw "Config missing '$Mode.Host'." }
-  if (-not $cfg.TnsEntryNames -or $cfg.TnsEntryNames.Count -eq 0) {
-    throw "Config must include 'TnsEntryNames' with at least one entry name."
-  }
-
-  $newHost   = [string]$cfg.$Mode.Host
-  $onlyNames = [string[]]$cfg.TnsEntryNames
-
-  # Normalize targets: exactly one BasePath per computer
-  $targets = foreach ($t in $cfg.Targets) {
-    if (-not $t.Computer) { throw "Each target must have 'Computer'." }
-    if (-not $t.BasePath) { throw "Target '$($t.Computer)' must have 'BasePath'." }
-    [pscustomobject]@{ Computer = [string]$t.Computer; BasePath = [string]$t.BasePath }
-  }
-
-  # Remote code (runs on target machine)
-  $remoteBlock = {
-    param(
-      [string]   $BasePath,
-      [string]   $NewHost,
-      [string[]] $EntryNames,
-      [bool]     $DoWhatIf
-    )
-
-    function New-BackupFile {
-      param([string]$Path)
-      $ts = Get-Date -Format 'yyyyMMdd-HHmmss'
-      $backup = "{0}.{1}.bak" -f $Path, $ts
-      Copy-Item -LiteralPath $Path -Destination $backup -Force
-      return $backup
-    }
-
-    # Preserve original encoding (incl. BOM)
-    function Get-ContentWithEncoding {
-      param([string]$Path)
-      $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-      try {
-        $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8, $true)
-        $text = $sr.ReadToEnd()
-        $enc  = $sr.CurrentEncoding
-      } finally { $sr.Close(); $fs.Close() }
-      [pscustomobject]@{ Text=$text; Encoding=$enc }
-    }
-    function Set-ContentPreserveEncoding {
-      param([string]$Path, [string]$Text, [System.Text.Encoding]$Encoding)
-      $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
-      try { $sw = New-Object System.IO.StreamWriter($fs, $Encoding); $sw.Write($Text) } finally { $sw.Close(); $fs.Close() }
-    }
-
-    # Regex to change HOST= (case-insensitive, tolerant spacing)
-    $rxHost = [regex]'(?im)(\bHOST\s*=\s*)([^)\s]+)'
-
-    function Replace-HostInEntryBlocks {
-      param([string]$Content, [string[]]$EntryNames, [regex]$RxHost, [string]$NewHost)
-
-      $updated = $Content
-      foreach ($name in $EntryNames) {
-        $escaped = [regex]::Escape($name)
-        # Balanced-paren match for a TNS entry block:  ^<name> = ( ...balanced... )
-        $pattern = "(?ims)^\s*$escaped\s*=\s*\((?>[^()]+|\((?<o>)|\)(?<-o>))*(?(o)(?!))\)"
-        $rxBlock = [regex]::new($pattern)
-        $updated = $rxBlock.Replace($updated, {
-          param($m)
-          $block = $m.Value
-          $RxHost.Replace($block, "`$1$NewHost")
-        })
-      }
-      return $updated
-    }
-
-    if (-not (Test-Path -LiteralPath $BasePath)) {
-      return ,([pscustomobject]@{ File=$null; Changed=$false; Backup=$null; Note="BasePath not found: $BasePath" })
-    }
-
-    $files = Get-ChildItem -LiteralPath $BasePath -Recurse -Filter 'tnsnames.ora' -File -ErrorAction SilentlyContinue
-    if (-not $files) {
-      return ,([pscustomobject]@{ File=$null; Changed=$false; Backup=$null; Note="No tnsnames.ora under $BasePath" })
-    }
-
-    $results = foreach ($f in $files) {
-      $data = Get-ContentWithEncoding -Path $f.FullName
-      $text = $data.Text
-      $orig = $text
-
-      # Only touch the specified entries from JSON
-      $text = Replace-HostInEntryBlocks -Content $text -EntryNames $EntryNames -RxHost $rxHost -NewHost $NewHost
-
-      $changed = -not [string]::Equals($orig, $text, [System.StringComparison]::Ordinal)
-
-      $backup = $null
-      if ($changed -and -not $DoWhatIf) {
-        $backup = New-BackupFile -Path $f.FullName
-        Set-ContentPreserveEncoding -Path $f.FullName -Text $text -Encoding $data.Encoding
-      }
-
-      [pscustomobject]@{ File=$f.FullName; Changed=$changed; Backup=$backup; Note=$null }
-    }
-
-    return $results
-  }
+# --- Load and validate config ---
+try {
+  $cfg = (Get-Content -Path $ConfigPath -Raw -ErrorAction Stop) | ConvertFrom-Json -ErrorAction Stop
+} catch {
+  throw "Failed to read/parse config '$ConfigPath': $($_.Exception.Message)"
 }
 
-process {
-  foreach ($t in $targets) {
-    $cn = $t.Computer
-    Write-Host ">>> $cn" -ForegroundColor Cyan
-    try {
-      $s = New-PSSession -ComputerName $cn -ErrorAction Stop
-      try {
-        if ($PSCmdlet.ShouldProcess($cn, "Set HOST to '$newHost' inside entries: $($onlyNames -join ', ')")) {
-          $res = Invoke-Command -Session $s -ScriptBlock $remoteBlock -ArgumentList @(
-            $t.BasePath, $newHost, $onlyNames, [bool]$WhatIf
-          )
+if (-not $cfg.Targets -or $cfg.Targets.Count -eq 0) { throw "Config must contain a non-empty 'Targets' array." }
+if (-not $cfg.$Mode -or -not $cfg.$Mode.Host)       { throw "Config missing '$Mode.Host'." }
+if (-not $cfg.TnsEntryNames -or $cfg.TnsEntryNames.Count -eq 0) {
+  throw "Config must include 'TnsEntryNames' with at least one entry name."
+}
 
-          $scanned = ($res | Where-Object File).Count
-          $changed = ($res | Where-Object Changed).Count
-          Write-Host ("  Files scanned: {0}, changed: {1}" -f $scanned, $changed)
-          foreach ($r in $res) {
-            if ($r.File) {
-              if ($r.Changed) {
-                Write-Host "  UPDATED: $($r.File)"
-                if ($r.Backup) { Write-Host "    Backup: $($r.Backup)" }
-              } else {
-                Write-Host "  No change: $($r.File)"
-              }
-            } elseif ($r.Note) {
-              Write-Host "  Note: $($r.Note)"
-            }
-          }
-        }
-      } finally {
-        Remove-PSSession -Session $s
-      }
-    } catch {
-      Write-Warning "  $cn : $($_.Exception.Message)"
+$newHost   = [string]  $cfg.$Mode.Host
+$onlyNames = [string[]]$cfg.TnsEntryNames
+
+# Exactly one BasePath per computer
+$targets = foreach ($t in $cfg.Targets) {
+  if (-not $t.Computer) { throw "Each target must have 'Computer'." }
+  if (-not $t.BasePath) { throw "Target '$($t.Computer)' must have 'BasePath'." }
+  [pscustomobject]@{ Computer = [string]$t.Computer; BasePath = [string]$t.BasePath }
+}
+
+# Honor -WhatIf by skipping writes but still scan/preview
+$DoWhatIf = [bool]$WhatIfPreference
+if ($DoWhatIf) { Write-Verbose "WhatIf: will scan and report, but will not write files on remote hosts." }
+
+# --- Remote code that runs on each target machine ---
+$remoteBlock = {
+  param(
+    [string]   $BasePath,
+    [string]   $NewHost,
+    [string[]] $EntryNames,
+    [bool]     $DoWhatIf
+  )
+
+  function New-BackupFile {
+    param([string]$Path)
+    $ts = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $backup = "{0}.{1}.bak" -f $Path, $ts
+    Copy-Item -LiteralPath $Path -Destination $backup -Force
+    return $backup
+  }
+
+  # Preserve original encoding (incl. BOM)
+  function Get-ContentWithEncoding {
+    param([string]$Path)
+    $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+      $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8, $true)
+      $text = $sr.ReadToEnd()
+      $enc  = $sr.CurrentEncoding
+    } finally { $sr.Close(); $fs.Close() }
+    [pscustomobject]@{ Text=$text; Encoding=$enc }
+  }
+  function Set-ContentPreserveEncoding {
+    param([string]$Path, [string]$Text, [System.Text.Encoding]$Encoding)
+    $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    try { $sw = New-Object System.IO.StreamWriter($fs, $Encoding); $sw.Write($Text) } finally { $sw.Close(); $fs.Close() }
+  }
+
+  # Regex to change HOST= (case-insensitive, tolerant spacing)
+  $rxHost = [regex]'(?im)(\bHOST\s*=\s*)([^)\s]+)'
+
+  function Replace-HostInEntryBlocks {
+    param([string]$Content, [string[]]$EntryNames, [regex]$RxHost, [string]$NewHost)
+
+    $updated = $Content
+    foreach ($name in $EntryNames) {
+      $escaped = [regex]::Escape($name)
+      # Balanced-paren match for a TNS entry block:  ^<name> = ( ...balanced... )
+      $pattern = "(?ims)^\s*$escaped\s*=\s*\((?>[^()]+|\((?<o>)|\)(?<-o>))*(?(o)(?!))\)"
+      $rxBlock = [regex]::new($pattern)
+      $updated = $rxBlock.Replace($updated, {
+        param($m)
+        $block = $m.Value
+        $RxHost.Replace($block, "`$1$NewHost")
+      })
     }
+    return $updated
+  }
+
+  if (-not (Test-Path -LiteralPath $BasePath)) {
+    return ,([pscustomobject]@{ File=$null; Changed=$false; Backup=$null; Note="BasePath not found: $BasePath" })
+  }
+
+  $files = Get-ChildItem -LiteralPath $BasePath -Recurse -Filter 'tnsnames.ora' -File -ErrorAction SilentlyContinue
+  if (-not $files) {
+    return ,([pscustomobject]@{ File=$null; Changed=$false; Backup=$null; Note="No tnsnames.ora under $BasePath" })
+  }
+
+  $results = foreach ($f in $files) {
+    $data = Get-ContentWithEncoding -Path $f.FullName
+    $text = $data.Text
+    $orig = $text
+
+    # Only touch the specified entries from JSON
+    $text = Replace-HostInEntryBlocks -Content $text -EntryNames $EntryNames -RxHost $rxHost -NewHost $NewHost
+
+    $changed = -not [string]::Equals($orig, $text, [System.StringComparison]::Ordinal)
+
+    $backup = $null
+    if ($changed -and -not $DoWhatIf) {
+      $backup = New-BackupFile -Path $f.FullName
+      Set-ContentPreserveEncoding -Path $f.FullName -Text $text -Encoding $data.Encoding
+    }
+
+    [pscustomobject]@{ File=$f.FullName; Changed=$changed; Backup=$backup; Note=$null }
+  }
+
+  return $results
+}
+
+# --- Execute against each target ---
+foreach ($t in $targets) {
+  $cn = $t.Computer
+  Write-Host ">>> $cn" -ForegroundColor Cyan
+  try {
+    $s = New-PSSession -ComputerName $cn -ErrorAction Stop
+    try {
+      # Do NOT gate with ShouldProcess so -WhatIf still scans. We skip writes inside the remote block.
+      $res = Invoke-Command -Session $s -ScriptBlock $remoteBlock -ArgumentList @(
+        $t.BasePath, $newHost, $onlyNames, [bool]$DoWhatIf
+      )
+
+      $scanned = ($res | Where-Object File).Count
+      $changed = ($res | Where-Object Changed).Count
+
+      if ($DoWhatIf) {
+        Write-Host ("  WhatIf: files scanned: {0}, would change: {1}" -f $scanned, $changed)
+      } else {
+        Write-Host ("  Files scanned: {0}, changed: {1}" -f $scanned, $changed)
+      }
+
+      foreach ($r in $res) {
+        if ($r.File) {
+          if ($r.Changed) {
+            if ($DoWhatIf) {
+              Write-Host "  WOULD UPDATE: $($r.File)"
+            } else {
+              Write-Host "  UPDATED: $($r.File)"
+              if ($r.Backup) { Write-Host "    Backup: $($r.Backup)" }
+            }
+          } else {
+            Write-Host "  No change: $($r.File)"
+          }
+        } elseif ($r.Note) {
+          Write-Host "  Note: $($r.Note)"
+        }
+      }
+    } finally {
+      Remove-PSSession -Session $s
+    }
+  } catch {
+    Write-Warning "  $cn : $($_.Exception.Message)"
   }
 }
