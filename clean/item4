@@ -4,7 +4,8 @@ param(
     [string]$Tag = "Default",
     [int]$MaxConcurrent = 40,
     [int]$WaitTimeoutSec = 600,
-    [int]$KillHungAfterSec = 3600
+    [int]$KillHungAfterSec = 3600,
+    [string[]]$ExcludeExtensions = @('.bat', '.exe')  # add more like '.cmd', '.dll'
 )
 
 Write-Host "[Start] Cleanup Started $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))"
@@ -43,15 +44,21 @@ foreach ($item in $settings) {
 
 # --- ScriptBlock ---
 $jobScript = {
-    param ($path, $keepDays, $dryRun, $reportPath, $logPath)
+    param ($path, $keepDays, $dryRun, $reportPath, $logPath, $excludeExtensions)
 
     function Rename-OldItems {
-        param ($path, $cutoff, $markDate, $dryRun, $logPath, $entry)
+        param ($path, $cutoff, $markDate, $dryRun, $logPath, $entry, $excludeExtensions)
 
         $markPrefix = "DELETE_BY_" + $markDate.ToString("yyyyMMdd") + "__"
 
+        # Files: fast in-memory filtering using .Where(), including extension exclude
         $files = Get-ChildItem -Path $path -File -Force -ErrorAction SilentlyContinue
-        $oldFiles = $files.Where({ $_.LastWriteTime -lt $cutoff -and $_.Name -notmatch '^DELETE_BY_\d{8}__' }, 'Default')
+        $oldFiles = $files.Where({
+            $_.LastWriteTime -lt $cutoff -and
+            $_.Name -notmatch '^DELETE_BY_\d{8}__' -and
+            ($excludeExtensions -notcontains $_.Extension)
+        }, 'Default')
+
         foreach ($file in $oldFiles) {
             $newName = Join-Path $file.DirectoryName ($markPrefix + $file.Name)
             if ($dryRun) {
@@ -68,8 +75,13 @@ $jobScript = {
             }
         }
 
+        # Folders: fast .Where(), prevent double-marking
         $dirs = Get-ChildItem -Path $path -Directory -Force -ErrorAction SilentlyContinue
-        $oldDirs = $dirs.Where({ $_.LastWriteTime -lt $cutoff -and $_.Name -notmatch '^DELETE_BY_\d{8}__' }, 'Default')
+        $oldDirs = $dirs.Where({
+            $_.LastWriteTime -lt $cutoff -and
+            $_.Name -notmatch '^DELETE_BY_\d{8}__'
+        }, 'Default')
+
         foreach ($dir in $oldDirs) {
             $newName = Join-Path $dir.Parent.FullName ($markPrefix + $dir.Name)
             if ($dryRun) {
@@ -141,7 +153,8 @@ $jobScript = {
         $entry.note = "Path does not exist"
         Add-Content $logPath "Path does not exist"
     } else {
-        Rename-OldItems -path $path -cutoff $cutoff -markDate $markDate -dryRun $dryRun -logPath $logPath -entry $entry
+        Rename-OldItems -path $path -cutoff $cutoff -markDate $markDate `
+            -dryRun $dryRun -logPath $logPath -entry $entry -excludeExtensions $excludeExtensions
         Cleanup-MarkedItems -path $path -now $now -dryRun $dryRun -logPath $logPath -entry $entry
     }
 
@@ -155,7 +168,8 @@ $jobIndex = 0
 
 foreach ($jobData in $allJobs) {
     Write-Host "[Start] $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) Job $jobIndex - $($jobData.path)"
-    $job = Start-Job -ScriptBlock $jobScript -ArgumentList $jobData.path, $jobData.daystokeep, $DryRun.IsPresent, $jobData.reportPath, $jobData.logPath
+    $job = Start-Job -ScriptBlock $jobScript `
+        -ArgumentList $jobData.path, $jobData.daystokeep, $DryRun.IsPresent, $jobData.reportPath, $jobData.logPath, $ExcludeExtensions
     $runningJobs += $job
     $jobIndex++
 
