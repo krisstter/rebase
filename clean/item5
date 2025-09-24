@@ -1,0 +1,70 @@
+function Remove-ItemRobust {
+    param(
+        [Parameter(Mandatory)] [System.IO.FileSystemInfo] $Obj,
+        [switch] $DryRun,
+        [int] $Retries = 3,
+        [int] $DelayMs = 500
+    )
+
+    # Normalize long-path form for WinPS 5.1
+    $full = $Obj.FullName
+    if ($full -notmatch '^\\\\\?\\') {
+        if ($full -like '\\\\*') { $full = $full -replace '^[\\]{2}', '\\?\UNC\' }
+        else { $full = '\\?\' + $full }
+    }
+
+    if ($DryRun) { return @{ ok = $true; msg = 'DRYRUN' } }
+
+    for ($i = 0; $i -le $Retries; $i++) {
+        try {
+            if ($Obj.PSIsContainer) {
+                # Clear attributes on all children (best effort)
+                Get-ChildItem -LiteralPath $Obj.FullName -Force -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+                    try { $_.Attributes = 'Normal' } catch {}
+                }
+                try { $Obj.Attributes = 'Normal' } catch {}
+
+                # If it's a reparse point, delete link only (no recurse into target)
+                if ($Obj.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                    Remove-Item -LiteralPath $Obj.FullName -Force -ErrorAction Stop
+                } else {
+                    Remove-Item -LiteralPath $Obj.FullName -Recurse -Force -ErrorAction Stop
+                }
+            } else {
+                try { $Obj.Attributes = 'Normal' } catch {}
+                Remove-Item -LiteralPath $Obj.FullName -Force -ErrorAction Stop
+            }
+            return @{ ok = $true; msg = 'Deleted' }
+        } catch {
+            if ($i -lt $Retries) { Start-Sleep -Milliseconds $DelayMs } else {
+                return @{ ok = $false; msg = ($_.Exception.Message) }
+            }
+        }
+    }
+}
+
+function Cleanup-MarkedItems {
+    param ($path, $now, $dryRun, $logPath, $entry)
+
+    $allItems = Get-ChildItem -Path $path -Force -ErrorAction SilentlyContinue
+    foreach ($item in $allItems) {
+        if ($item.Name -match '^DELETE_BY_(\d{8})__') {
+            $deleteBy = [datetime]::ParseExact($matches[1], 'yyyyMMdd', $null)
+            if ($deleteBy -lt $now) {
+                if ($dryRun) {
+                    Add-Content $logPath "Would delete: $($item.FullName)"
+                    if ($item.PSIsContainer) { $entry.deletedFolderCount++ } else { $entry.deletedFileCount++ }
+                } else {
+                    $res = Remove-ItemRobust -Obj $item
+                    if ($res.ok) {
+                        if ($item.PSIsContainer) { $entry.deletedFolderCount++ } else { $entry.deletedFileCount++ }
+                        Add-Content $logPath "Deleted: $($item.FullName)"
+                    } else {
+                        $entry.skippedDeletions++
+                        Add-Content $logPath "SKIPPED: $($item.FullName) -> $($res.msg)"
+                    }
+                }
+            }
+        }
+    }
+}
