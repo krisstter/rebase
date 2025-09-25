@@ -1,46 +1,34 @@
-function Remove-ItemRobust {
+function Write-DeleteFailureLog {
     param(
-        [Parameter(Mandatory)] [System.IO.FileSystemInfo] $Obj,
-        [switch] $DryRun,
-        [int] $Retries = 3,
-        [int] $DelayMs = 500
+        [Parameter(Mandatory)] [string]$LogPath,
+        [Parameter(Mandatory)] [System.IO.FileSystemInfo]$Item,
+        [Parameter(Mandatory)] [System.Exception]$Ex
     )
+    $attrs    = $Item.Attributes
+    $isDir    = $Item.PSIsContainer
+    $isReparse= [bool]($attrs -band [IO.FileAttributes]::ReparsePoint)
+    $pathLen  = $Item.FullName.Length
+    $ext      = if ($isDir) { '<DIR>' } else { $Item.Extension }
+    $size     = if ($isDir) { '-' } else { "{0:N0}" -f $Item.Length }
 
-    # Normalize long-path form for WinPS 5.1
-    $full = $Obj.FullName
-    if ($full -notmatch '^\\\\\?\\') {
-        if ($full -like '\\\\*') { $full = $full -replace '^[\\]{2}', '\\?\UNC\' }
-        else { $full = '\\?\' + $full }
-    }
+    # (Optional) quick lock hint for files – uncomment if you want this signal too
+    # $lockHint = if (-not $isDir) {
+    #     try { $fs = [IO.File]::Open($Item.FullName,'Open','Read','None'); $fs.Dispose(); 'not-locked' }
+    #     catch { 'LOCKED' }
+    # } else { '-' }
 
-    if ($DryRun) { return @{ ok = $true; msg = 'DRYRUN' } }
+    $line = @(
+        "SKIPPED: $($Item.FullName)",
+        "  Reason : $($Ex.Message)",
+        "  Attr   : $attrs",
+        "  Ext    : $ext",
+        "  Size   : $size",
+        "  PathLen: $pathLen",
+        "  Reparse: $isReparse"
+        # ,"  Lock   : $lockHint"   # <- include if you uncomment lock check above
+    ) -join [Environment]::NewLine
 
-    for ($i = 0; $i -le $Retries; $i++) {
-        try {
-            if ($Obj.PSIsContainer) {
-                # Clear attributes on all children (best effort)
-                Get-ChildItem -LiteralPath $Obj.FullName -Force -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-                    try { $_.Attributes = 'Normal' } catch {}
-                }
-                try { $Obj.Attributes = 'Normal' } catch {}
-
-                # If it's a reparse point, delete link only (no recurse into target)
-                if ($Obj.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-                    Remove-Item -LiteralPath $Obj.FullName -Force -ErrorAction Stop
-                } else {
-                    Remove-Item -LiteralPath $Obj.FullName -Recurse -Force -ErrorAction Stop
-                }
-            } else {
-                try { $Obj.Attributes = 'Normal' } catch {}
-                Remove-Item -LiteralPath $Obj.FullName -Force -ErrorAction Stop
-            }
-            return @{ ok = $true; msg = 'Deleted' }
-        } catch {
-            if ($i -lt $Retries) { Start-Sleep -Milliseconds $DelayMs } else {
-                return @{ ok = $false; msg = ($_.Exception.Message) }
-            }
-        }
-    }
+    Add-Content -Path $LogPath -Value $line
 }
 
 function Cleanup-MarkedItems {
@@ -55,13 +43,18 @@ function Cleanup-MarkedItems {
                     Add-Content $logPath "Would delete: $($item.FullName)"
                     if ($item.PSIsContainer) { $entry.deletedFolderCount++ } else { $entry.deletedFileCount++ }
                 } else {
-                    $res = Remove-ItemRobust -Obj $item
-                    if ($res.ok) {
-                        if ($item.PSIsContainer) { $entry.deletedFolderCount++ } else { $entry.deletedFileCount++ }
+                    try {
+                        if ($item.PSIsContainer) {
+                            Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction Stop
+                            $entry.deletedFolderCount++
+                        } else {
+                            Remove-Item -LiteralPath $item.FullName -Force -ErrorAction Stop
+                            $entry.deletedFileCount++
+                        }
                         Add-Content $logPath "Deleted: $($item.FullName)"
-                    } else {
+                    } catch {
                         $entry.skippedDeletions++
-                        Add-Content $logPath "SKIPPED: $($item.FullName) -> $($res.msg)"
+                        Add-Content $logPath "Failed to delete: $($item.FullName) -> $($_.Exception.Message)"
                     }
                 }
             }
