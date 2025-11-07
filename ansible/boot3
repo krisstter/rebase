@@ -1,0 +1,11 @@
+# force-remove stray binaries if still present
+for bin in /bin/ansible /usr/bin/ansible; do
+  if [ -f "$bin" ]; then
+    echo "[INFO] Deleting leftover $bin (was using /usr/bin/python3.12)"
+    sudo rm -f "$bin"
+  fi
+done
+
+which ansible
+head -1 $(which ansible)
+ansible --version
