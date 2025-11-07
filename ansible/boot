@@ -1,0 +1,67 @@
+#!/bin/bash
+set -euo pipefail
+
+echo "===== [$(date)] Starting Ansible reinstall under Miniconda ====="
+
+# -----------------------------------------------------------------------------
+# 1. Define paths and ensure Miniconda is first in PATH
+# -----------------------------------------------------------------------------
+CONDA_DIR="/usr/local/lib/miniconda310"
+CONDA_BIN="$CONDA_DIR/bin"
+
+if [ ! -d "$CONDA_DIR" ]; then
+  echo "[ERROR] Miniconda not found at $CONDA_DIR — aborting."
+  exit 1
+fi
+
+export PATH="$CONDA_BIN:$PATH"
+echo "[INFO] PATH set to prioritize Miniconda: $PATH"
+
+PYTHON_BIN="$CONDA_BIN/python"
+PIP_BIN="$CONDA_BIN/pip"
+
+echo "[INFO] Using Python: $PYTHON_BIN"
+"$PYTHON_BIN" --version
+echo "[INFO] Using Pip: $PIP_BIN"
+"$PIP_BIN" --version
+
+# -----------------------------------------------------------------------------
+# 2. Uninstall any existing Ansible installations
+# -----------------------------------------------------------------------------
+echo "[INFO] Uninstalling existing Ansible packages (if any)..."
+"$PIP_BIN" uninstall -y ansible ansible-core ansible-lint molecule || true
+
+# -----------------------------------------------------------------------------
+# 3. Reinstall Ansible and required dependencies
+# -----------------------------------------------------------------------------
+echo "[INFO] Installing Ansible and dependencies from Nexus..."
+
+"$PIP_BIN" install --no-cache-dir --upgrade --upgrade-strategy eager \
+  ansible \
+  ansible-lint \
+  molecule \
+  pywinrm[kerberos] \
+  azure-common \
+  azure-identity \
+  azure-mgmt-resource \
+  azure-mgmt-compute \
+  msrestazure \
+  msgraph-sdk==1.6.0
+
+# -----------------------------------------------------------------------------
+# 4. Verify installation
+# -----------------------------------------------------------------------------
+echo "[INFO] Verifying Ansible installation..."
+which ansible || { echo "[ERROR] ansible binary not found!"; exit 1; }
+
+ansible --version
+
+PY_PATH=$(ansible --version | grep "python version" | awk '{print $NF}' | tr -d '()')
+if [[ "$PY_PATH" == *"/usr/local/lib/miniconda310/"* ]]; then
+  echo "[SUCCESS] Ansible is correctly using Miniconda Python ($PY_PATH)."
+else
+  echo "[ERROR] Ansible is NOT using Miniconda Python (currently: $PY_PATH)"
+  exit 1
+fi
+
+echo "===== [$(date)] Ansible reinstall completed successfully ====="
