@@ -1,0 +1,76 @@
+#!/bin/bash
+# -----------------------------------------------------------------------------
+# Bootstrap script: reinstall Ansible using Miniconda Python 3.10
+# -----------------------------------------------------------------------------
+
+echo "===== [$(date)] Starting Ansible reinstall under Miniconda ====="
+
+# -----------------------------------------------------------------------------
+# 1. Define Python & ensure Miniconda exists
+# -----------------------------------------------------------------------------
+PYTHON="/usr/local/lib/miniconda310/bin/python"
+CONDA_BIN="/usr/local/lib/miniconda310/bin"
+PIP="$PYTHON -m pip"
+
+if [ ! -x "$PYTHON" ]; then
+  echo "[ERROR] Miniconda Python not found at $PYTHON"
+  exit 1
+fi
+
+export PATH="$CONDA_BIN:$PATH"
+echo "[INFO] PATH prioritized for Miniconda: $PATH"
+echo "[INFO] Using Python: $PYTHON"
+"$PYTHON" --version
+
+# -----------------------------------------------------------------------------
+# 2. Uninstall any existing Ansible packages
+# -----------------------------------------------------------------------------
+echo "[INFO] Uninstalling existing Ansible components..."
+$PIP uninstall -y ansible ansible-core ansible-lint molecule || true
+
+# -----------------------------------------------------------------------------
+# 3. Upgrade packaging tools
+# -----------------------------------------------------------------------------
+echo "[INFO] Upgrading pip / setuptools / wheel..."
+$PIP install --no-cache-dir --upgrade pip setuptools wheel
+
+# -----------------------------------------------------------------------------
+# 4. Install Ansible and dependencies
+# -----------------------------------------------------------------------------
+echo "[INFO] Installing Ansible and required libraries..."
+$PIP install --no-cache-dir --upgrade --upgrade-strategy eager \
+  ansible \
+  ansible-lint \
+  molecule \
+  pywinrm[kerberos] \
+  azure-common \
+  azure-identity \
+  azure-mgmt-resource \
+  azure-mgmt-compute \
+  msrestazure \
+  msgraph-sdk==1.6.0
+
+echo "[INFO] Installation finished."
+
+# -----------------------------------------------------------------------------
+# 5. Validate installation
+# -----------------------------------------------------------------------------
+echo "[INFO] Validating Ansible..."
+ANSIBLE_BIN="$CONDA_BIN/ansible"
+
+if [ ! -x "$ANSIBLE_BIN" ]; then
+  echo "[ERROR] ansible binary not found at $ANSIBLE_BIN"
+  exit 1
+fi
+
+"$ANSIBLE_BIN" --version
+
+PY_PATH=$("$ANSIBLE_BIN" --version | awk -F'[()]' '/python version/{print $2}')
+if echo "$PY_PATH" | grep -q "/usr/local/lib/miniconda310/"; then
+  echo "[SUCCESS] Ansible is correctly using Miniconda Python ($PY_PATH)."
+else
+  echo "[ERROR] Ansible is NOT using Miniconda Python (currently: $PY_PATH)"
+  exit 1
+fi
+
+echo "===== [$(date)] Ansible reinstall completed successfully ====="
