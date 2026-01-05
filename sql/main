@@ -73,3 +73,31 @@ JOIN sys.objects o
 WHERE d.referenced_id = @obj
   AND d.referenced_minor_id = @col
 ORDER BY o.type_desc, referencing_schema, referencing_object;
+
+SELECT
+    t.name                           AS table_name,
+    i.index_id,
+    i.type_desc,
+    ds.type_desc                     AS data_space_type,
+    ds.name                          AS data_space_name,
+    ps.name                          AS partition_scheme,
+    pf.name                          AS partition_function,
+    c.name                           AS partitioning_column,
+    ic.partition_ordinal
+FROM sys.tables t
+JOIN sys.indexes i
+    ON i.object_id = t.object_id
+JOIN sys.data_spaces ds
+    ON ds.data_space_id = i.data_space_id
+LEFT JOIN sys.partition_schemes ps
+    ON ps.data_space_id = ds.data_space_id
+LEFT JOIN sys.partition_functions pf
+    ON pf.function_id = ps.function_id
+LEFT JOIN sys.index_columns ic
+    ON ic.object_id = i.object_id
+   AND ic.index_id  = i.index_id
+   AND ic.partition_ordinal = 1
+LEFT JOIN sys.columns c
+    ON c.object_id = ic.object_id
+   AND c.column_id = ic.column_id
+WHERE t.name = '';
