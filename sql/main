@@ -53,3 +53,23 @@ FROM sys.sql_modules m
 JOIN sys.objects o
   ON o.object_id = m.object_id
 WHERE m.definition LIKE '%%';
+
+DECLARE @obj int = OBJECT_ID('');
+DECLARE @col int =
+(
+    SELECT column_id
+    FROM sys.columns
+    WHERE object_id = @obj
+      AND name = ''
+);
+
+SELECT
+    OBJECT_SCHEMA_NAME(d.referencing_id) AS referencing_schema,
+    OBJECT_NAME(d.referencing_id)        AS referencing_object,
+    o.type_desc
+FROM sys.sql_expression_dependencies d
+JOIN sys.objects o
+  ON o.object_id = d.referencing_id
+WHERE d.referenced_id = @obj
+  AND d.referenced_minor_id = @col
+ORDER BY o.type_desc, referencing_schema, referencing_object;
