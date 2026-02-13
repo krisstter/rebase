@@ -1,0 +1,12 @@
+sc query cryptsvc
+net start cryptsvc
+
+set MK=%ProgramData%\Microsoft\Crypto\RSA\MachineKeys
+
+takeown /f "%MK%" /a /r /d y
+icacls "%MK%" /inheritance:e
+icacls "%MK%" /grant "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F"
+icacls "%MK%" /grant "IIS_IUSRS:(OI)(CI)RX" "NETWORK SERVICE:(OI)(CI)RX"
+
+net stop was /y
+net start was
