@@ -1,0 +1,13 @@
+$ErrorActionPreference = 'Stop'
+
+$oldProgress = $ProgressPreference
+$ProgressPreference = 'SilentlyContinue'
+try {
+    $response = Invoke-WebRequest -Uri $url -Method Get -Headers $header -UseBasicParsing
+}
+finally {
+    $ProgressPreference = $oldProgress
+}
+
+$content = $response.Content | ConvertFrom-Json
+$data    = $content.data.data
