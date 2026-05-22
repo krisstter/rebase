@@ -1,0 +1,27 @@
+$Path = "C:\Your\Folder"
+
+Get-ChildItem $Path -Force | ForEach-Object {
+
+    if ($_.PSIsContainer) {
+
+        $Size = [System.IO.Directory]::EnumerateFiles($_.FullName, '*', 'AllDirectories') |
+            ForEach-Object {
+                try { (Get-Item $_).Length } catch {}
+            } |
+            Measure-Object -Sum
+
+        [PSCustomObject]@{
+            Type = "Directory"
+            Name = $_.Name
+            SizeGB = "{0:N2}" -f ($Size.Sum / 1GB)
+        }
+    }
+    else {
+        [PSCustomObject]@{
+            Type = "File"
+            Name = $_.Name
+            SizeGB = "{0:N2}" -f ($_.Length / 1GB)
+        }
+    }
+
+} | Sort-Object SizeGB -Descending | Select-Object -First 20
