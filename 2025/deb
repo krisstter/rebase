@@ -1,0 +1,19 @@
+<ReadLinesFromFile
+    File="$(LogFile)"
+    Condition="Exists('$(LogFile)')">
+    <Output TaskParameter="Lines" ItemName="LogFileContent" />
+</ReadLinesFromFile>
+
+<Message
+    Condition="'$(ErrorCode)' != '0' And Exists('$(LogFile)')"
+    Importance="high"
+    Text="publish log file content:&#xA;@(LogFileContent, '&#xA;')" />
+
+<Message
+    Condition="'$(ErrorCode)' != '0' And !Exists('$(LogFile)')"
+    Importance="high"
+    Text="publish log file does not exist: $(LogFile)" />
+
+<Error
+    Condition="'$(ErrorCode)' != '0'"
+    Text="publish failed with exitcode: $(ErrorCode). Please find more info in the log file: $(LogFile)" />
