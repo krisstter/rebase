@@ -1,0 +1,140 @@
+
+.merge_lead_time:
+  stage: .pre
+  tags:
+    - <<tag>>
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+  variables:
+    LEAD_TIME_HOURS: "168"
+    APPROVAL_RULE_NAME: "Merge Lead Time Review"
+
+  script:
+    - |
+      $ErrorActionPreference = 'Stop'
+
+      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+      $apiUrl = $env:CI_API_V4_URL
+      $projectId = $env:CI_PROJECT_ID
+      $mrIid = $env:CI_MERGE_REQUEST_IID
+      $token = $env:GITLAB_API_TOKEN
+      $maxHours = [int]$env:LEAD_TIME_HOURS
+      $ruleName = $env:APPROVAL_RULE_NAME
+
+      if (-not $apiUrl -or -not $projectId -or -not $mrIid -or -not $token) {
+          throw "Missing required GitLab variables"
+      }
+
+      $headers = @{
+          'PRIVATE-TOKEN' = $token
+      }
+
+      $mrApi = "$apiUrl/projects/$projectId/merge_requests/$mrIid"
+
+      function Get-GitLabPages {
+          param([string]$Url)
+
+          $results = @()
+          $page = 1
+
+          do {
+              $separator = if ($Url.Contains('?')) { '&' } else { '?' }
+              $requestUrl = "${Url}${separator}per_page=100&page=$page"
+
+              $batch = @(Invoke-RestMethod -Method Get -Uri $requestUrl -Headers $headers)
+              $results += $batch
+              $page++
+
+          } while ($batch.Count -eq 100)
+
+          return $results
+      }
+
+      # Get all MR commits
+      $commits = @(Get-GitLabPages "$mrApi/commits")
+
+      if ($commits.Count -eq 0) {
+          throw "No commits found for MR !$mrIid"
+      }
+
+      # Find first commit by committed date
+      $firstCommit = $commits |
+          Sort-Object { [datetimeoffset]$_.committed_date } |
+          Select-Object -First 1
+
+      $firstCommitDate = [datetimeoffset]$firstCommit.committed_date
+      $leadTimeHours = ([datetimeoffset]::UtcNow - $firstCommitDate).TotalHours
+
+      Write-Host "MR: !$mrIid"
+      Write-Host "First commit: $firstCommitDate"
+      Write-Host "Lead time: $([math]::Round($leadTimeHours, 2)) hours"
+      Write-Host "Threshold: $maxHours hours"
+
+      # No additional approval needed below threshold
+      if ($leadTimeHours -le $maxHours) {
+          Write-Host "Lead time within threshold. Keeping existing approval rules."
+          return
+      }
+
+      Write-Host "Lead time exceeded. Checking approval rule..."
+
+      # Find the existing MR approval rule
+      $rules = @(Get-GitLabPages "$mrApi/approval_rules")
+
+      $matches = @($rules | Where-Object {
+          $_.name -eq $ruleName -and $_.rule_type -eq 'regular'
+      })
+
+      if ($matches.Count -ne 1) {
+          throw "Expected exactly one approval rule '$ruleName', found $($matches.Count)"
+      }
+
+      $rule = $matches[0]
+
+      if ([int]$rule.approvals_required -ge 2) {
+          Write-Host "Rule already requires $($rule.approvals_required) approvals."
+          return
+      }
+
+      if ($rule.contains_hidden_groups) {
+          throw "Rule contains hidden groups. Manual verification required."
+      }
+
+      # Preserve existing approver users and groups
+      $userIds = @($rule.users | ForEach-Object { [int]$_.id })
+      $groupIds = @($rule.groups | ForEach-Object { [int]$_.id })
+
+      if ($userIds.Count -eq 0 -and $groupIds.Count -eq 0) {
+          throw "No explicit approvers configured for '$ruleName'"
+      }
+
+      $body = @{
+          approvals_required = 2
+          user_ids = $userIds
+          group_ids = $groupIds
+      } | ConvertTo-Json -Depth 5
+
+      $ruleApi = "$mrApi/approval_rules/$($rule.id)"
+
+      Write-Host "Updating approval rule from $($rule.approvals_required) to 2"
+
+      $null = Invoke-RestMethod `
+          -Method Put `
+          -Uri $ruleApi `
+          -Headers $headers `
+          -ContentType 'application/json' `
+          -Body $body
+
+      # Verify the update
+      $updated = Invoke-RestMethod `
+          -Method Get `
+          -Uri $ruleApi `
+          -Headers $headers
+
+      if ([int]$updated.approvals_required -lt 2) {
+          throw "Approval rule update verification failed"
+      }
+
+      Write-Host "SUCCESS: MR !$mrIid now requires 2 approvals."
