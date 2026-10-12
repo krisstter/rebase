@@ -1,0 +1,199 @@
+
+param(
+    [string]$GitLabApiUrl = $env:CI_API_V4_URL,
+    [string]$ProjectId = $env:CI_PROJECT_ID,
+    [string]$MergeRequestIid = $env:CI_MERGE_REQUEST_IID,
+    [string]$Token = $env:GITLAB_API_TOKEN,
+    [int]$MaxHours = 168,
+    [string]$RuleName = 'Merge Lead Time Review',
+    [switch]$DryRun
+)
+
+$ErrorActionPreference = 'Stop'
+
+# Required for older Windows PowerShell 5.1 environments
+[Net.ServicePointManager]::SecurityProtocol =
+    [Net.SecurityProtocolType]::Tls12
+
+if (-not $GitLabApiUrl -or
+    -not $ProjectId -or
+    -not $MergeRequestIid -or
+    -not $Token) {
+    throw 'Missing GitLab CI variables or API token.'
+}
+
+$GitLabApiUrl = $GitLabApiUrl.TrimEnd('/')
+$ProjectId = [uri]::EscapeDataString($ProjectId)
+
+$Headers = @{
+    'PRIVATE-TOKEN' = $Token
+}
+
+$MrApi = "$GitLabApiUrl/projects/$ProjectId/merge_requests/$MergeRequestIid"
+
+function Get-GitLabData {
+    param([string]$Uri)
+
+    Invoke-RestMethod -Method Get -Uri $Uri -Headers $Headers
+}
+
+function Get-GitLabPages {
+    param([string]$Uri)
+
+    $all = @()
+    $page = 1
+
+    do {
+        $separator = if ($Uri.Contains('?')) { '&' } else { '?' }
+        $requestUri = "${Uri}${separator}per_page=100&page=$page"
+
+        $batch = @(Get-GitLabData -Uri $requestUri)
+        $all += $batch
+        $page++
+
+    } while ($batch.Count -eq 100)
+
+    return $all
+}
+
+# -------------------------------------------------------
+# 1. Retrieve Merge Request
+# -------------------------------------------------------
+
+$mr = Get-GitLabData -Uri $MrApi
+
+if ($mr.state -ne 'opened') {
+    Write-Host "MR !$MergeRequestIid is not open. Skipping."
+    exit 0
+}
+
+Write-Host "Merge Request: !$MergeRequestIid"
+Write-Host "Title: $($mr.title)"
+
+# -------------------------------------------------------
+# 2. Get commits belonging to the MR
+# -------------------------------------------------------
+
+$commits = @(Get-GitLabPages -Uri "$MrApi/commits")
+
+if ($commits.Count -eq 0) {
+    throw "No commits found for MR !$MergeRequestIid"
+}
+
+# Oldest commit based on committed date
+$firstCommit = $commits |
+    Sort-Object { [datetimeoffset]$_.created_at } |
+    Select-Object -First 1
+
+$firstCommitDate = [datetimeoffset]$firstCommit.created_at
+$now = [datetimeoffset]::UtcNow
+
+$leadTimeHours = ($now - $firstCommitDate).TotalHours
+
+Write-Host "Commit count: $($commits.Count)"
+Write-Host "First commit: $firstCommitDate"
+Write-Host "Current time: $now"
+Write-Host "Lead time: $([math]::Round($leadTimeHours, 2)) hours"
+Write-Host "Threshold: $MaxHours hours"
+
+# -------------------------------------------------------
+# 3. Determine required approvals
+# -------------------------------------------------------
+
+$requiredApprovals = if ($leadTimeHours -gt $MaxHours) {
+    2
+}
+else {
+    1
+}
+
+Write-Host "Policy requires: $requiredApprovals approval(s)"
+
+# -------------------------------------------------------
+# 4. Retrieve existing MR approval rule
+# -------------------------------------------------------
+
+$rules = @(Get-GitLabPages -Uri "$MrApi/approval_rules")
+
+$matchingRules = @($rules | Where-Object {
+    $_.name -eq $RuleName -and
+    $_.rule_type -eq 'regular'
+})
+
+if ($matchingRules.Count -ne 1) {
+    throw "Expected one regular approval rule '$RuleName', found $($matchingRules.Count)"
+}
+
+$rule = $matchingRules[0]
+
+$currentApprovals = [int]$rule.approvals_required
+
+Write-Host "Current required approvals: $currentApprovals"
+
+# Never decrease an existing requirement
+if ($currentApprovals -ge $requiredApprovals) {
+    Write-Host "No update needed."
+    exit 0
+}
+
+if ($rule.contains_hidden_groups) {
+    throw 'Rule contains hidden groups. Refusing unsafe update.'
+}
+
+# -------------------------------------------------------
+# 5. Preserve existing approvers
+# -------------------------------------------------------
+
+$userIds = @($rule.users | ForEach-Object {
+    [int]$_.id
+})
+
+$groupIds = @($rule.groups | ForEach-Object {
+    [int]$_.id
+})
+
+if ($userIds.Count -eq 0 -and $groupIds.Count -eq 0) {
+    throw 'Rule has no explicitly configured eligible approvers.'
+}
+
+$body = @{
+    approvals_required = $requiredApprovals
+    user_ids = $userIds
+    group_ids = $groupIds
+}
+
+$ruleApi = "$MrApi/approval_rules/$($rule.id)"
+
+if ($DryRun) {
+    Write-Host "[DRY RUN] Would update rule $($rule.id)"
+    Write-Host "[DRY RUN] $currentApprovals -> $requiredApprovals approvals"
+    exit 0
+}
+
+# -------------------------------------------------------
+# 6. Update approval rule
+# -------------------------------------------------------
+
+Write-Host "Updating approvals: $currentApprovals -> $requiredApprovals"
+
+$json = $body | ConvertTo-Json -Depth 5
+
+$null = Invoke-RestMethod `
+    -Method Put `
+    -Uri $ruleApi `
+    -Headers $Headers `
+    -ContentType 'application/json' `
+    -Body $json
+
+# -------------------------------------------------------
+# 7. Verify update
+# -------------------------------------------------------
+
+$updatedRule = Get-GitLabData -Uri $ruleApi
+
+if ([int]$updatedRule.approvals_required -lt $requiredApprovals) {
+    throw 'GitLab approval rule verification failed.'
+}
+
+Write-Host "SUCCESS: MR now requires $($updatedRule.approvals_required) approvals."
+exit 0
