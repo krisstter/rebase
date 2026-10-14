@@ -1,0 +1,38 @@
+
+
+
+
+$source      = Join-Path "C:\source" 
+$destination = Join-Path "D:\destination" 
+
+$subFolders = @(
+
+)
+
+foreach ($subFolder in $subFolders) {
+
+    $src = Join-Path $source $subFolder
+    $dst = Join-Path $destination $subFolder
+
+    if (-not (Test-Path -LiteralPath $src -PathType Container)) {
+        Write-Warning "Source not found: $src"
+        continue
+    }
+
+    Write-Host "Copying $src -> $dst"
+
+    & robocopy.exe $src $dst `
+        /E `
+        /MAXAGE:5 `
+        /XO `
+        /XF "DELETE_BY*" `
+        /XD "DELETE_BY*" `
+        /MT:32 `
+        /R:0 `
+        /W:0 `
+        /NFL /NDL /NJH /NJS /NP
+
+    if ($LASTEXITCODE -ge 8) {
+        Write-Warning "Robocopy failed: $src (exit code: $LASTEXITCODE)"
+    }
+}
